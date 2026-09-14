@@ -27,3 +27,6 @@ dist-ssr
 .env.save
 .vercel/
 supabase/.temp/
+
+# Local Docker environment
+.env.docker
