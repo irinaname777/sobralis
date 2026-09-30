@@ -4,8 +4,9 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Trip, Group, GroupMember, TripParticipant } from '@/types';
 import { Modal, Input, Button, FormField, EmptyState, ErrorMessage, Toast, useAsyncAction } from '@/components/ui';
-import { fetchGroupMembers, syncEventParticipants, organizerOnlySelection, withOrganizer } from '@/lib/participants';
+import { fetchGroupMembers, syncEventParticipants, organizerOnlySelection, withOrganizer, respondToEventInvitation, submitTripCounterProposal, invitationStatusLabel, isActiveMember } from '@/lib/participants';
 import { formatUserError } from '@/lib/errors';
+import { findScheduleConflicts, suggestFreeSlots, formatConflictHint } from '@/lib/schedule';
 import { format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
 
@@ -19,6 +20,11 @@ export function TripsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [counterTrip, setCounterTrip] = useState<Trip | null>(null);
+  const [counterStartDate, setCounterStartDate] = useState('');
+  const [counterEndDate, setCounterEndDate] = useState('');
+  const [counterTime, setCounterTime] = useState('');
+  const [counterLocation, setCounterLocation] = useState('');
 
   // Form state
   const [selectedGroup, setSelectedGroup] = useState('');
@@ -79,7 +85,7 @@ export function TripsPage() {
           .in('group_id', groupIds)
           .order('created_at', { ascending: true });
         const membersMap: Record<string, GroupMember[]> = {};
-        for (const m of (allMembers as GroupMember[]) || []) {
+        for (const m of ((allMembers as GroupMember[]) || []).filter(isActiveMember)) {
           if (!membersMap[m.group_id]) membersMap[m.group_id] = [];
           membersMap[m.group_id].push(m);
         }
@@ -118,7 +124,7 @@ export function TripsPage() {
 
   const openCreateForm = async () => {
     resetForm();
-    const groupId = groups[0]?.id || '';
+    const groupId = groups.find((g) => g.status !== 'archived')?.id || '';
     if (groupId) {
       setSelectedGroup(groupId);
       try {
@@ -174,6 +180,21 @@ export function TripsPage() {
     const invitees = withOrganizer(selectedParticipants, user.id);
 
     const result = await runSave(async () => {
+      const conflicts = await findScheduleConflicts({
+        userIds: Array.from(invitees),
+        start: startDate,
+        end: endDate,
+        excludeKind: editingTrip ? 'trip' : null,
+        excludeId: editingTrip?.id || null,
+      });
+      if (conflicts.length > 0) {
+        const slots = await suggestFreeSlots({
+          userIds: Array.from(invitees),
+          from: startDate,
+          days: 21,
+        });
+        throw new Error(formatConflictHint(conflicts, slots));
+      }
       const payload = {
         group_id: selectedGroup,
         title: title.trim(),
@@ -234,6 +255,23 @@ export function TripsPage() {
     }
   };
 
+  const handleResponse = async (tripId: string, status: 'accepted' | 'declined' | 'counter_proposed') => {
+    try {
+      if (status === 'counter_proposed') {
+        if (!counterStartDate || !counterEndDate || counterEndDate < counterStartDate) {
+          setValidationError('Укажите корректные даты поездки');
+          return;
+        }
+        await submitTripCounterProposal(tripId, { startDate: counterStartDate, endDate: counterEndDate, time: counterTime, location: counterLocation });
+      } else {
+        await respondToEventInvitation('trip', tripId, status);
+      }
+      showToast(status === 'accepted' ? 'Участие подтверждено' : status === 'declined' ? 'Вы отказались от поездки' : 'Предложение отправлено организатору');
+      loadData();
+      setCounterTrip(null); setCounterStartDate(''); setCounterEndDate(''); setCounterTime(''); setCounterLocation('');
+    } catch (err) { showToast(formatUserError(err, 'Не удалось обновить ответ')); }
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center py-20 text-stone-400">Загрузка…</div>;
   }
@@ -245,13 +283,13 @@ export function TripsPage() {
           <h1 className="text-2xl font-bold text-stone-800">Поездки</h1>
           <p className="text-stone-500 mt-1">Планируйте путешествия вместе</p>
         </div>
-        <Button onClick={openCreateForm} disabled={groups.length === 0} className="!px-3">
+        <Button onClick={openCreateForm} disabled={groups.filter((g) => g.status !== 'archived').length === 0} className="!px-3">
           <Plus size={18} className="sm:mr-1" />
           <span className="hidden sm:inline">Поездка</span>
         </Button>
       </div>
 
-      {groups.length === 0 ? (
+      {groups.filter((g) => g.status !== 'archived').length === 0 ? (
         <EmptyState
           icon={<Plane size={28} />}
           title="Сначала создайте группу"
@@ -320,10 +358,24 @@ export function TripsPage() {
                       return (
                         <span key={p.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-stone-50 text-xs text-stone-600">
                           <span>{member?.avatar_emoji || '🌸'}</span>
-                          {member?.display_name || 'Участница'}
+                          {member?.display_name || 'Участница'} · {invitationStatusLabel(p.status)}
+                          {p.status === 'counter_proposed' && (
+                            <span className="text-stone-400">
+                              {p.counter_start_date || p.counter_date || p.counter_time || p.counter_location
+                                ? ` (${[p.counter_start_date || p.counter_date, p.counter_end_date, p.counter_time, p.counter_location].filter(Boolean).join(' — ')})`
+                                : ''}
+                            </span>
+                          )}
                         </span>
                       );
                     })}
+                  </div>
+                )}
+                {parts.find((p) => p.user_id === user?.id)?.status === 'pending' && (
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    <Button onClick={() => handleResponse(t.id, 'accepted')} className="!py-1.5 !px-3 text-xs">Подтвердить</Button>
+                    <Button variant="secondary" onClick={() => handleResponse(t.id, 'declined')} className="!py-1.5 !px-3 text-xs">Отказаться</Button>
+                    <Button variant="secondary" onClick={() => { setCounterTrip(t); setCounterStartDate(t.start_date); setCounterEndDate(t.end_date); setCounterTime(''); setCounterLocation(t.destination || ''); }} className="!py-1.5 !px-3 text-xs">Предложить другое</Button>
                   </div>
                 )}
               </div>
@@ -345,7 +397,7 @@ export function TripsPage() {
               className="w-full px-4 py-2.5 rounded-xl border border-stone-200 bg-white text-stone-800 outline-none focus:border-rose-300 focus:ring-2 focus:ring-rose-100"
             >
               <option value="">Выберите группу</option>
-              {groups.map((g) => (
+              {groups.filter((g) => g.status !== 'archived').map((g) => (
                 <option key={g.id} value={g.id}>{g.name}</option>
               ))}
             </select>
@@ -415,6 +467,18 @@ export function TripsPage() {
               {editingTrip ? 'Сохранить' : 'Создать'}
             </Button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!counterTrip} onClose={() => setCounterTrip(null)} title="Предложить другую поездку">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label="Дата начала"><Input type="date" value={counterStartDate} onChange={(e) => setCounterStartDate(e.target.value)} /></FormField>
+            <FormField label="Дата окончания"><Input type="date" value={counterEndDate} onChange={(e) => setCounterEndDate(e.target.value)} /></FormField>
+          </div>
+          <FormField label="Время"><Input type="time" value={counterTime} onChange={(e) => setCounterTime(e.target.value)} /></FormField>
+          <FormField label="Место"><Input value={counterLocation} onChange={(e) => setCounterLocation(e.target.value)} placeholder="Например, другое направление" /></FormField>
+          <div className="flex gap-3"><Button variant="secondary" onClick={() => setCounterTrip(null)} className="flex-1">Отмена</Button><Button onClick={() => counterTrip && handleResponse(counterTrip.id, 'counter_proposed')} className="flex-1">Отправить</Button></div>
         </div>
       </Modal>
 

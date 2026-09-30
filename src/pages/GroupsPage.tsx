@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Users, Plus, Link2, Copy, Check, Trash2, UserPlus, Settings } from 'lucide-react';
+import { Users, Plus, Link2, Copy, Check, Trash2, UserPlus, Archive, ArchiveRestore } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import type { Group, GroupMember, GroupInvitation } from '@/types';
+import type { Group, GroupMember } from '@/types';
+import { isActiveMember, removeGroupMember } from '@/lib/participants';
 import { Modal, Input, Button, FormField, EmptyState, ErrorMessage, Toast, useAsyncAction } from '@/components/ui';
 import { formatUserError } from '@/lib/errors';
 
@@ -60,7 +61,7 @@ export function GroupsPage() {
         .order('created_at', { ascending: true });
 
       const membersMap: Record<string, GroupMember[]> = {};
-      for (const m of (membersData as GroupMember[]) || []) {
+      for (const m of ((membersData as GroupMember[]) || []).filter(isActiveMember)) {
         if (!membersMap[m.group_id]) membersMap[m.group_id] = [];
         membersMap[m.group_id].push(m);
       }
@@ -126,26 +127,55 @@ export function GroupsPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleRemoveMember = async (memberId: string, groupId: string) => {
-    const { error } = await supabase
-      .from('group_members')
-      .delete()
-      .eq('id', memberId);
-
-    if (!error) {
-      showToast('Участница удалена');
+  const handleRemoveMember = async (memberId: string) => {
+    try {
+      await removeGroupMember(memberId);
+      showToast('Участница удалена из группы. История встреч, поездок и расходов сохранена.');
       loadData();
+    } catch (err) {
+      showToast(formatUserError(err, 'Не удалось удалить участницу'));
     }
   };
 
-  const handleDeleteGroup = async (groupId: string) => {
-    if (!confirm('Удалить группу? Все данные группы будут потеряны.')) return;
-    const { error } = await supabase.from('groups').delete().eq('id', groupId);
+  const handleArchiveGroup = async (groupId: string) => {
+    if (!confirm('Архивировать группу? Встречи, поездки и расходы сохранятся в архиве.')) return;
+    const { error } = await supabase.rpc('archive_group', { _group_id: groupId });
     if (!error) {
-      showToast('Группа удалена');
+      showToast('Группа архивирована');
       loadData();
+    } else {
+      showToast(formatUserError(error, 'Не удалось архивировать группу'));
     }
   };
+
+  const handleRestoreGroup = async (groupId: string) => {
+    const { error } = await supabase.rpc('restore_group', { _group_id: groupId });
+    if (!error) {
+      showToast('Группа восстановлена');
+      loadData();
+    } else {
+      showToast(formatUserError(error, 'Не удалось восстановить группу'));
+    }
+  };
+
+  const handlePermanentDelete = async (group: Group) => {
+    if (!confirm('Удалить окончательно? Это необратимо: будут удалены группа, встречи, поездки, расходы и история участников.')) return;
+    const typed = prompt(`Чтобы подтвердить удаление, введите название группы:\n${group.name}`);
+    if (typed !== group.name) {
+      showToast('Удаление отменено');
+      return;
+    }
+    const { error } = await supabase.rpc('permanently_delete_archived_group', { _group_id: group.id });
+    if (!error) {
+      showToast('Группа удалена окончательно');
+      loadData();
+    } else {
+      showToast(formatUserError(error, 'Не удалось удалить группу окончательно'));
+    }
+  };
+
+  const activeGroups = groups.filter((group) => group.status === 'active');
+  const archivedGroups = groups.filter((group) => group.status === 'archived');
 
   if (loading) {
     return <div className="flex items-center justify-center py-20 text-stone-400">Загрузка…</div>;
@@ -164,7 +194,7 @@ export function GroupsPage() {
         </Button>
       </div>
 
-      {groups.length === 0 ? (
+      {activeGroups.length === 0 ? (
         <EmptyState
           icon={<Users size={28} />}
           title="Здесь пока никого нет"
@@ -173,7 +203,7 @@ export function GroupsPage() {
         />
       ) : (
         <div className="space-y-4">
-          {groups.map((group) => {
+          {activeGroups.map((group) => {
             const groupMembers = members[group.id] || [];
             const isOwner = group.owner_id === user?.id;
             return (
@@ -183,24 +213,24 @@ export function GroupsPage() {
                     <h3 className="font-semibold text-stone-800">{group.name}</h3>
                     {group.description && <p className="text-sm text-stone-500 mt-0.5">{group.description}</p>}
                   </div>
-                  {isOwner && (
-                    <div className="flex gap-1">
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => handleCreateInvite(group.id)}
+                      className="p-2 rounded-lg hover:bg-stone-100 text-stone-400 transition-colors"
+                      title="Пригласить"
+                    >
+                      <UserPlus size={18} />
+                    </button>
+                    {isOwner && (
                       <button
-                        onClick={() => handleCreateInvite(group.id)}
-                        className="p-2 rounded-lg hover:bg-stone-100 text-stone-400 transition-colors"
-                        title="Пригласить"
-                      >
-                        <UserPlus size={18} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteGroup(group.id)}
+                        onClick={() => handleArchiveGroup(group.id)}
                         className="p-2 rounded-lg hover:bg-red-50 text-stone-400 hover:text-red-400 transition-colors"
-                        title="Удалить группу"
+                        title="Архивировать группу"
                       >
-                        <Trash2 size={18} />
+                        <Archive size={18} />
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -218,7 +248,7 @@ export function GroupsPage() {
                       </div>
                       {isOwner && m.user_id !== user?.id && (
                         <button
-                          onClick={() => handleRemoveMember(m.id, group.id)}
+                          onClick={() => handleRemoveMember(m.id)}
                           className="p-1.5 rounded-lg hover:bg-red-50 text-stone-300 hover:text-red-400 transition-colors"
                         >
                           <Trash2 size={14} />
@@ -228,19 +258,50 @@ export function GroupsPage() {
                   ))}
                 </div>
 
-                {isOwner && (
-                  <button
-                    onClick={() => handleCreateInvite(group.id)}
-                    className="mt-3 flex items-center gap-2 text-sm text-rose-500 font-medium hover:text-rose-600"
-                  >
-                    <Link2 size={14} />
-                    Пригласить подругу
-                  </button>
-                )}
+                <button
+                  onClick={() => handleCreateInvite(group.id)}
+                  className="mt-3 flex items-center gap-2 text-sm text-rose-500 font-medium hover:text-rose-600"
+                >
+                  <Link2 size={14} />
+                  Пригласить подругу
+                </button>
               </div>
             );
           })}
         </div>
+      )}
+
+      {archivedGroups.length > 0 && (
+        <section className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold text-stone-700 flex items-center gap-2"><Archive size={18} /> Архив</h2>
+            <p className="text-sm text-stone-500 mt-1">Встречи, поездки и расходы этих групп сохранены.</p>
+          </div>
+          {archivedGroups.map((group) => {
+            const isOwner = group.owner_id === user?.id;
+            return (
+              <div key={group.id} className="bg-stone-50 rounded-2xl p-5 border border-stone-200">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="font-semibold text-stone-700">{group.name}</h3>
+                    {group.description && <p className="text-sm text-stone-500 mt-0.5">{group.description}</p>}
+                  </div>
+                  {isOwner && (
+                    <div className="flex gap-1">
+                      <button onClick={() => handleRestoreGroup(group.id)} className="p-2 rounded-lg hover:bg-white text-stone-500 transition-colors" title="Восстановить группу">
+                        <ArchiveRestore size={18} />
+                      </button>
+                      <button onClick={() => handlePermanentDelete(group)} className="p-2 rounded-lg hover:bg-red-50 text-stone-400 hover:text-red-500 transition-colors" title="Удалить окончательно">
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {isOwner && <p className="text-xs text-stone-500 mt-3">Восстановить или удалить окончательно</p>}
+              </div>
+            );
+          })}
+        </section>
       )}
 
       {/* Create group modal */}

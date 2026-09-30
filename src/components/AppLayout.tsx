@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { Home, Users, Calendar, Coffee, Plane, Receipt, User } from 'lucide-react';
+import { Home, Users, Calendar, Coffee, Plane, Receipt, User, Bell } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 const navItems = [
@@ -9,6 +9,7 @@ const navItems = [
   { to: '/meetings', icon: Coffee, label: 'Встречи' },
   { to: '/trips', icon: Plane, label: 'Поездки' },
   { to: '/expenses', icon: Receipt, label: 'Расходы' },
+  { to: '/notifications', icon: Bell, label: 'Уведомления' },
   { to: '/profile', icon: User, label: 'Профиль' },
 ];
 

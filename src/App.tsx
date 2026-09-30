@@ -13,6 +13,7 @@ import { TripsPage } from '@/pages/TripsPage';
 import { ExpensesPage } from '@/pages/ExpensesPage';
 import { ProfilePage } from '@/pages/ProfilePage';
 import { InvitePage } from '@/pages/InvitePage';
+import { NotificationsPage } from '@/pages/NotificationsPage';
 import type { ReactNode } from 'react';
 
 const queryClient = new QueryClient();
@@ -76,6 +77,7 @@ function AppRoutes() {
         <Route path="/meetings" element={<MeetingsPage />} />
         <Route path="/trips" element={<TripsPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/profile" element={<ProfilePage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -4,8 +4,9 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Meeting, Group, GroupMember, MeetingParticipant } from '@/types';
 import { Modal, Input, Button, FormField, EmptyState, ErrorMessage, Toast, useAsyncAction } from '@/components/ui';
-import { fetchGroupMembers, syncEventParticipants, organizerOnlySelection, withOrganizer } from '@/lib/participants';
+import { fetchGroupMembers, syncEventParticipants, organizerOnlySelection, withOrganizer, respondToEventInvitation, invitationStatusLabel, isActiveMember } from '@/lib/participants';
 import { formatUserError } from '@/lib/errors';
+import { findScheduleConflicts, suggestFreeSlots, formatConflictHint } from '@/lib/schedule';
 import { format, parseISO, isToday, isFuture, isPast } from 'date-fns';
 import { ru } from 'date-fns/locale';
 
@@ -19,6 +20,10 @@ export function MeetingsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingMeeting, setEditingMeeting] = useState<Meeting | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [counterMeeting, setCounterMeeting] = useState<Meeting | null>(null);
+  const [counterDate, setCounterDate] = useState('');
+  const [counterTime, setCounterTime] = useState('');
+  const [counterLocation, setCounterLocation] = useState('');
 
   // Form state
   const [selectedGroup, setSelectedGroup] = useState('');
@@ -80,7 +85,7 @@ export function MeetingsPage() {
           .in('group_id', groupIds)
           .order('created_at', { ascending: true });
         const membersMap: Record<string, GroupMember[]> = {};
-        for (const m of (allMembers as GroupMember[]) || []) {
+        for (const m of ((allMembers as GroupMember[]) || []).filter(isActiveMember)) {
           if (!membersMap[m.group_id]) membersMap[m.group_id] = [];
           membersMap[m.group_id].push(m);
         }
@@ -119,7 +124,7 @@ export function MeetingsPage() {
 
   const openCreateForm = async () => {
     resetForm();
-    const groupId = groups[0]?.id || '';
+    const groupId = groups.find((g) => g.status !== 'archived')?.id || '';
     if (groupId) {
       setSelectedGroup(groupId);
       try {
@@ -180,6 +185,23 @@ export function MeetingsPage() {
     const invitees = withOrganizer(selectedParticipants, user.id);
 
     const result = await runSave(async () => {
+      const conflicts = await findScheduleConflicts({
+        userIds: Array.from(invitees),
+        start: date,
+        end: date,
+        time: time || null,
+        excludeKind: editingMeeting ? 'meeting' : null,
+        excludeId: editingMeeting?.id || null,
+      });
+      if (conflicts.length > 0) {
+        const slots = await suggestFreeSlots({
+          userIds: Array.from(invitees),
+          from: date,
+          days: 21,
+          preferredTime: time || null,
+        });
+        throw new Error(formatConflictHint(conflicts, slots));
+      }
       const payload = {
         group_id: selectedGroup,
         title: title.trim(),
@@ -243,6 +265,17 @@ export function MeetingsPage() {
       showToast('Встреча удалена');
       loadData();
     }
+  };
+
+  const handleResponse = async (meetingId: string, status: 'accepted' | 'declined' | 'counter_proposed') => {
+    try {
+      const counter = status === 'counter_proposed' ? { date: counterDate, time: counterTime, location: counterLocation } : undefined;
+      if (status === 'counter_proposed' && !counter?.date) { setValidationError('Укажите предложенную дату'); return; }
+      await respondToEventInvitation('meeting', meetingId, status, counter);
+      showToast(status === 'accepted' ? 'Участие подтверждено' : status === 'declined' ? 'Вы отказались от встречи' : 'Предложение отправлено организатору');
+      loadData();
+      setCounterMeeting(null); setCounterDate(''); setCounterTime(''); setCounterLocation('');
+    } catch (err) { showToast(formatUserError(err, 'Не удалось обновить ответ')); }
   };
 
   const upcoming = meetings.filter((m) => {
@@ -313,10 +346,24 @@ export function MeetingsPage() {
               return (
                 <span key={p.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-stone-50 text-xs text-stone-600">
                   <span>{member?.avatar_emoji || '🌸'}</span>
-                  {member?.display_name || 'Участница'}
+                  {member?.display_name || 'Участница'} · {invitationStatusLabel(p.status)}
+                  {p.status === 'counter_proposed' && (
+                    <span className="text-stone-400">
+                      {p.counter_date || p.counter_time || p.counter_location
+                        ? ` (${[p.counter_date, p.counter_time, p.counter_location].filter(Boolean).join(', ')})`
+                        : ''}
+                    </span>
+                  )}
                 </span>
               );
             })}
+          </div>
+        )}
+        {parts.find((p) => p.user_id === user?.id)?.status === 'pending' && (
+          <div className="flex flex-wrap gap-2 mt-3">
+            <Button onClick={() => handleResponse(m.id, 'accepted')} className="!py-1.5 !px-3 text-xs">Подтвердить</Button>
+            <Button variant="secondary" onClick={() => handleResponse(m.id, 'declined')} className="!py-1.5 !px-3 text-xs">Отказаться</Button>
+            <Button variant="secondary" onClick={() => { setCounterMeeting(m); setCounterDate(m.meeting_date); setCounterTime(m.meeting_time || ''); setCounterLocation(m.location || ''); }} className="!py-1.5 !px-3 text-xs">Предложить другое</Button>
           </div>
         )}
       </div>
@@ -330,13 +377,13 @@ export function MeetingsPage() {
           <h1 className="text-2xl font-bold text-stone-800">Встречи</h1>
           <p className="text-stone-500 mt-1">Планируйте встречи с подругами</p>
         </div>
-        <Button onClick={openCreateForm} disabled={groups.length === 0} className="!px-3">
+        <Button onClick={openCreateForm} disabled={groups.filter((g) => g.status !== 'archived').length === 0} className="!px-3">
           <Plus size={18} className="sm:mr-1" />
           <span className="hidden sm:inline">Встреча</span>
         </Button>
       </div>
 
-      {groups.length === 0 ? (
+      {groups.filter((g) => g.status !== 'archived').length === 0 ? (
         <EmptyState
           icon={<Coffee size={28} />}
           title="Сначала создайте группу"
@@ -380,7 +427,7 @@ export function MeetingsPage() {
               className="w-full px-4 py-2.5 rounded-xl border border-stone-200 bg-white text-stone-800 outline-none focus:border-rose-300 focus:ring-2 focus:ring-rose-100"
             >
               <option value="">Выберите группу</option>
-              {groups.map((g) => (
+              {groups.filter((g) => g.status !== 'archived').map((g) => (
                 <option key={g.id} value={g.id}>{g.name}</option>
               ))}
             </select>
@@ -450,6 +497,15 @@ export function MeetingsPage() {
               {editingMeeting ? 'Сохранить' : 'Создать'}
             </Button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!counterMeeting} onClose={() => setCounterMeeting(null)} title="Предложить другое время">
+        <div className="space-y-4">
+          <FormField label="Дата"><Input type="date" value={counterDate} onChange={(e) => setCounterDate(e.target.value)} /></FormField>
+          <FormField label="Время"><Input type="time" value={counterTime} onChange={(e) => setCounterTime(e.target.value)} /></FormField>
+          <FormField label="Место"><Input value={counterLocation} onChange={(e) => setCounterLocation(e.target.value)} placeholder="Например, кафе" /></FormField>
+          <div className="flex gap-3"><Button variant="secondary" onClick={() => setCounterMeeting(null)} className="flex-1">Отмена</Button><Button onClick={() => counterMeeting && handleResponse(counterMeeting.id, 'counter_proposed')} className="flex-1">Отправить</Button></div>
         </div>
       </Modal>
 

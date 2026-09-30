@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Receipt, Plus, Trash2, ArrowRight, TrendingUp, TrendingDown } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import type { Expense, ExpenseParticipant, Group, GroupMember } from '@/types';
+import type { Expense, ExpenseParticipant, ExpenseObligation, Group, GroupMember } from '@/types';
 import { calculateBalances, optimizeDebts, calculateEqualShares, type DebtSettlement } from '@/lib/expenses/debtCalculator';
 import { Modal, Input, Button, FormField, EmptyState, ErrorMessage, Toast, useAsyncAction } from '@/components/ui';
 import { format, parseISO } from 'date-fns';
@@ -12,6 +12,7 @@ export function ExpensesPage() {
   const { user } = useAuth();
   const [expenses, setExpenses] = useState<(Expense & { group_name?: string })[]>([]);
   const [expenseParts, setExpenseParts] = useState<Record<string, ExpenseParticipant[]>>({});
+  const [obligations, setObligations] = useState<ExpenseObligation[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [groupMembers, setGroupMembers] = useState<Record<string, GroupMember[]>>({});
   const [loading, setLoading] = useState(true);
@@ -79,6 +80,13 @@ export function ExpensesPage() {
           partsMap[p.expense_id].push(p);
         }
         setExpenseParts(partsMap);
+
+        const { data: obligationData } = await supabase
+          .from('expense_obligations')
+          .select('*')
+          .in('expense_id', expWithGroup.map((e) => e.id))
+          .order('created_at', { ascending: false });
+        setObligations((obligationData as ExpenseObligation[]) || []);
       }
 
       const { data: allMembers } = await supabase
@@ -238,6 +246,20 @@ export function ExpensesPage() {
     return m?.avatar_emoji || '🌸';
   };
 
+  const handleMarkPaid = async (id: string) => {
+    const { error } = await supabase.rpc('mark_obligation_paid', { _obligation_id: id });
+    if (error) { showToast('Не удалось отметить перевод'); return; }
+    showToast('Перевод заявлен и ожидает подтверждения');
+    loadData();
+  };
+
+  const handleConfirmPaid = async (id: string) => {
+    const { error } = await supabase.rpc('confirm_obligation_payment', { _obligation_id: id });
+    if (error) { showToast('Не удалось подтвердить перевод'); return; }
+    showToast('Оплата подтверждена');
+    loadData();
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center py-20 text-stone-400">Загрузка…</div>;
   }
@@ -300,6 +322,7 @@ export function ExpensesPage() {
         <div className="space-y-3">
           {expenses.map((e) => {
             const parts = expenseParts[e.id] || [];
+            const expenseObligations = obligations.filter((o) => o.expense_id === e.id);
             return (
               <div key={e.id} className="bg-white rounded-2xl p-5 shadow-sm border border-stone-100">
                 <div className="flex items-start justify-between mb-2">
@@ -327,6 +350,21 @@ export function ExpensesPage() {
                     </span>
                   ))}
                 </div>
+                {expenseObligations.length > 0 && (
+                  <div className="mt-3 space-y-2 border-t border-stone-100 pt-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Обязательства</p>
+                    {expenseObligations.map((o) => (
+                      <div key={o.id} className="flex flex-wrap items-center justify-between gap-2 text-sm bg-stone-50 rounded-xl px-3 py-2">
+                        <span className="text-stone-700">{getMemberName(e.group_id, o.debtor_id)} должна {getMemberName(e.group_id, o.creditor_id)} — <b>{Number(o.amount).toLocaleString('ru-RU')} ₽</b></span>
+                        {o.status === 'unpaid' && o.debtor_id === user?.id && <Button onClick={() => handleMarkPaid(o.id)} className="!py-1 !px-2 text-xs">Я перечислила</Button>}
+                        {o.status === 'payment_pending_confirmation' && o.creditor_id === user?.id && <Button onClick={() => handleConfirmPaid(o.id)} className="!py-1 !px-2 text-xs">Получила деньги</Button>}
+                        {o.status === 'unpaid' && o.debtor_id !== user?.id && <span className="text-xs text-amber-600">Не оплачено</span>}
+                        {o.status === 'payment_pending_confirmation' && o.creditor_id !== user?.id && <span className="text-xs text-amber-600">Ожидает подтверждения</span>}
+                        {o.status === 'settled' && <span className="text-xs text-emerald-600">Погашено</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}

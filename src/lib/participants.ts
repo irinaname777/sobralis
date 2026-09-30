@@ -1,6 +1,10 @@
 import { supabase } from '@/lib/supabase';
 import type { GroupMember } from '@/types';
 
+export function isActiveMember(member: GroupMember) {
+  return member.status !== 'removed';
+}
+
 export async function fetchGroupMembers(groupId: string): Promise<GroupMember[]> {
   const { data, error } = await supabase
     .from('group_members')
@@ -8,7 +12,12 @@ export async function fetchGroupMembers(groupId: string): Promise<GroupMember[]>
     .eq('group_id', groupId)
     .order('created_at', { ascending: true });
   if (error) throw error;
-  return (data as GroupMember[]) || [];
+  return ((data as GroupMember[]) || []).filter(isActiveMember);
+}
+
+export async function removeGroupMember(memberId: string) {
+  const { error } = await supabase.rpc('remove_group_member', { _member_id: memberId });
+  if (error) throw error;
 }
 
 type ParticipantKind = 'meeting' | 'trip';
@@ -33,7 +42,7 @@ export async function syncEventParticipants(
   const toRemove = existingUserIds.filter((id) => !selected.has(id) && id !== organizerId);
 
   if (toAdd.length > 0) {
-    const rows = toAdd.map((user_id) => ({ [fk]: eventId, user_id }));
+    const rows = toAdd.map((user_id) => ({ [fk]: eventId, user_id, status: user_id === organizerId ? 'accepted' : 'pending' }));
     const { error } = await supabase.from(table).insert(rows);
     if (error) throw error;
   }
@@ -52,4 +61,41 @@ export function withOrganizer(ids: Iterable<string>, organizerId: string) {
   const next = new Set(ids);
   if (organizerId) next.add(organizerId);
   return next;
+}
+
+export type InvitationStatus = 'accepted' | 'declined' | 'counter_proposed';
+
+export async function respondToEventInvitation(
+  kind: ParticipantKind,
+  eventId: string,
+  status: InvitationStatus,
+  counter?: { date?: string; time?: string; location?: string }
+) {
+  const { error } = await supabase.rpc('respond_to_event_invitation', {
+    _kind: kind,
+    _event_id: eventId,
+    _status: status,
+    _counter_date: counter?.date || null,
+    _counter_time: counter?.time || null,
+    _counter_location: counter?.location || null,
+  });
+  if (error) throw error;
+}
+
+export async function submitTripCounterProposal(
+  tripId: string,
+  proposal: { startDate: string; endDate: string; time?: string; location?: string }
+) {
+  const { error } = await supabase.rpc('submit_trip_counter_proposal', {
+    _trip_id: tripId,
+    _start_date: proposal.startDate,
+    _end_date: proposal.endDate,
+    _time: proposal.time || null,
+    _location: proposal.location || null,
+  });
+  if (error) throw error;
+}
+
+export function invitationStatusLabel(status: string) {
+  return ({ pending: 'Ожидает ответа', accepted: 'Подтверждено', declined: 'Отказ', counter_proposed: 'Предложено изменение' } as Record<string, string>)[status] || status;
 }

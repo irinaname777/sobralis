@@ -13,6 +13,7 @@ export type Group = {
   name: string;
   description: string | null;
   owner_id: string;
+  status: 'active' | 'archived';
   created_at: string;
   updated_at: string;
 };
@@ -24,6 +25,7 @@ export type GroupMember = {
   role: string;
   display_name: string | null;
   avatar_emoji: string | null;
+  status?: 'invited' | 'accepted' | 'active' | 'removed';
   created_at: string;
 };
 
@@ -66,6 +68,10 @@ export type MeetingParticipant = {
   id: string;
   meeting_id: string;
   user_id: string;
+  status: 'pending' | 'accepted' | 'declined' | 'counter_proposed';
+  counter_date: string | null;
+  counter_time: string | null;
+  counter_location: string | null;
   created_at: string;
 };
 
@@ -86,6 +92,12 @@ export type TripParticipant = {
   id: string;
   trip_id: string;
   user_id: string;
+  status: 'pending' | 'accepted' | 'declined' | 'counter_proposed';
+  counter_date: string | null;
+  counter_start_date?: string | null;
+  counter_end_date?: string | null;
+  counter_time: string | null;
+  counter_location: string | null;
   created_at: string;
 };
 
@@ -109,6 +121,12 @@ export type ExpenseParticipant = {
   user_id: string;
   share_amount: number;
   created_at: string;
+};
+
+export type ExpenseObligation = {
+  id: string; expense_id: string; debtor_id: string; creditor_id: string; amount: number;
+  status: 'unpaid' | 'payment_pending_confirmation' | 'settled' | 'archived';
+  marked_at: string | null; confirmed_at: string | null;
 };
 
 export type PrivacyLevel = 'full' | 'comfort' | 'hidden';
