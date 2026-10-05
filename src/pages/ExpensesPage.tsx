@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { Receipt, Plus, Trash2, ArrowRight, TrendingUp, TrendingDown } from 'lucide-react';
+import { Receipt, Plus, Trash2, Pencil, ArrowRight, TrendingUp, TrendingDown } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Expense, ExpenseParticipant, ExpenseObligation, Group, GroupMember } from '@/types';
@@ -17,8 +17,13 @@ export function ExpensesPage() {
   const [groupMembers, setGroupMembers] = useState<Record<string, GroupMember[]>>({});
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [showSettlements, setShowSettlements] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [paymentObligation, setPaymentObligation] = useState<ExpenseObligation | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
 
   // Form state
   const [selectedGroup, setSelectedGroup] = useState('');
@@ -130,6 +135,7 @@ export function ExpensesPage() {
     setSelectedParticipants(new Set());
     setManualShares({});
     setValidationError(null);
+    setEditingExpense(null);
   };
 
   const openCreateForm = () => {
@@ -149,6 +155,29 @@ export function ExpensesPage() {
     setSelectedParticipants(new Set(members.map((m) => m.user_id)));
     setManualShares({});
     if (members.length > 0) setPaidBy(user?.id || '');
+  };
+
+  const openEditForm = (expense: Expense) => {
+    const parts = expenseParts[expense.id] || [];
+
+    setEditingExpense(expense);
+    setSelectedGroup(expense.group_id);
+    setTitle(expense.title);
+    setAmount(String(expense.amount));
+    setPaidBy(expense.paid_by);
+    setSplitMethod(expense.split_method as 'equal' | 'manual');
+
+    const participantIds = new Set(parts.map((p) => p.user_id));
+    setSelectedParticipants(participantIds);
+
+    const shares: Record<string, string> = {};
+    for (const p of parts) {
+      shares[p.user_id] = String(p.share_amount);
+    }
+    setManualShares(shares);
+
+    setValidationError(null);
+    setShowForm(true);
   };
 
   const handleSave = async () => {
@@ -227,6 +256,81 @@ export function ExpensesPage() {
     }
   };
 
+  const handleUpdate = async () => {
+    if (!user || !editingExpense) return;
+
+    setValidationError(null);
+
+    const amt = parseFloat(amount);
+    if (isNaN(amt) || amt <= 0) {
+      setValidationError('Сумма должна быть больше нуля');
+      return;
+    }
+
+    const participantArray = Array.from(selectedParticipants);
+
+    if (participantArray.length === 0) {
+      setValidationError('У расхода должна остаться хотя бы одна участница');
+      return;
+    }
+
+    const shares: Record<string, number> = {};
+
+    if (splitMethod === 'equal') {
+      const equalShares = calculateEqualShares(amt, participantArray.length);
+
+      participantArray.forEach((uid, i) => {
+        shares[uid] = equalShares[i];
+      });
+    } else {
+      let total = 0;
+
+      for (const uid of participantArray) {
+        const s = parseFloat(manualShares[uid] || '0');
+
+        if (isNaN(s) || s < 0) {
+          setValidationError('Все суммы должны быть неотрицательными числами');
+          return;
+        }
+
+        shares[uid] = s;
+        total += s;
+      }
+
+      const roundedTotal = Math.round(total * 100) / 100;
+      const roundedAmt = Math.round(amt * 100) / 100;
+
+      if (Math.abs(roundedTotal - roundedAmt) > 0.01) {
+        setValidationError(
+          `Сумма распределения (${roundedTotal} ₽) не равна общей сумме (${roundedAmt} ₽)`
+        );
+        return;
+      }
+    }
+
+    const result = await runSave(async () => {
+      const { error } = await supabase.rpc('update_expense', {
+        _expense_id: editingExpense.id,
+        _amount: amt,
+        _split_method: splitMethod,
+        _shares: participantArray.map((userId) => ({
+          user_id: userId,
+          share_amount: shares[userId],
+        })),
+      });
+
+      if (error) throw error;
+    });
+
+    if (result !== null) {
+      setShowForm(false);
+      setEditingExpense(null);
+      resetForm();
+      showToast('Расход изменён');
+      loadData();
+    }
+  };
+
   const handleDelete = async (expense: Expense) => {
     if (!confirm(`Удалить расход «${expense.title}»?`)) return;
     const { error } = await supabase.from('expenses').delete().eq('id', expense.id);
@@ -246,9 +350,47 @@ export function ExpensesPage() {
     return m?.avatar_emoji || '🌸';
   };
 
-  const handleMarkPaid = async (id: string) => {
-    const { error } = await supabase.rpc('mark_obligation_paid', { _obligation_id: id });
-    if (error) { showToast('Не удалось отметить перевод'); return; }
+  const handleMarkPaid = (obligation: ExpenseObligation) => {
+    setPaymentObligation(obligation);
+    setPaymentAmount('');
+    setPaymentError(null);
+  };
+
+  const handleSubmitPayment = async () => {
+    if (!paymentObligation) return;
+
+    const value = Number(paymentAmount.replace(',', '.'));
+    const remaining = Number(paymentObligation.amount);
+
+    if (!Number.isFinite(value) || value <= 0) {
+      setPaymentError('Введите сумму больше нуля');
+      return;
+    }
+
+    if (value > remaining) {
+      setPaymentError(
+        `Сумма не может быть больше остатка ${remaining.toLocaleString('ru-RU')} ₽`
+      );
+      return;
+    }
+
+    setPaymentLoading(true);
+
+    const { error } = await supabase.rpc('mark_obligation_paid', {
+      _obligation_id: paymentObligation.id,
+      _payment_amount: value,
+    });
+
+    setPaymentLoading(false);
+
+    if (error) {
+      setPaymentError(error.message || 'Не удалось отметить перевод');
+      return;
+    }
+
+    setPaymentObligation(null);
+    setPaymentAmount('');
+    setPaymentError(null);
     showToast('Перевод заявлен и ожидает подтверждения');
     loadData();
   };
@@ -257,6 +399,15 @@ export function ExpensesPage() {
     const { error } = await supabase.rpc('confirm_obligation_payment', { _obligation_id: id });
     if (error) { showToast('Не удалось подтвердить перевод'); return; }
     showToast('Оплата подтверждена');
+    loadData();
+  };
+
+  const handleRejectPaid = async (id: string) => {
+    const { error } = await supabase.rpc('reject_obligation_payment', {
+      _obligation_id: id,
+    });
+    if (error) { showToast('Не удалось отклонить подтверждение'); return; }
+    showToast('Оплата не подтверждена, долг снова отмечен как неоплаченный');
     loadData();
   };
 
@@ -334,7 +485,21 @@ export function ExpensesPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-stone-800">{Number(e.amount).toLocaleString('ru-RU')} ₽</span>
-                    <button onClick={() => handleDelete(e)} className="p-1.5 rounded-lg hover:bg-red-50 text-stone-300 hover:text-red-400 transition-colors">
+
+                    {groups.find((g) => g.id === e.group_id)?.owner_id === user?.id && (
+                      <button
+                        onClick={() => openEditForm(e)}
+                        className="p-1.5 rounded-lg hover:bg-stone-100 text-stone-300 hover:text-stone-600 transition-colors"
+                        title="Редактировать расход"
+                      >
+                        <Pencil size={16} />
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => handleDelete(e)}
+                      className="p-1.5 rounded-lg hover:bg-red-50 text-stone-300 hover:text-red-400 transition-colors"
+                    >
                       <Trash2 size={16} />
                     </button>
                   </div>
@@ -356,8 +521,53 @@ export function ExpensesPage() {
                     {expenseObligations.map((o) => (
                       <div key={o.id} className="flex flex-wrap items-center justify-between gap-2 text-sm bg-stone-50 rounded-xl px-3 py-2">
                         <span className="text-stone-700">{getMemberName(e.group_id, o.debtor_id)} должна {getMemberName(e.group_id, o.creditor_id)} — <b>{Number(o.amount).toLocaleString('ru-RU')} ₽</b></span>
-                        {o.status === 'unpaid' && o.debtor_id === user?.id && <Button onClick={() => handleMarkPaid(o.id)} className="!py-1 !px-2 text-xs">Я перечислила</Button>}
-                        {o.status === 'payment_pending_confirmation' && o.creditor_id === user?.id && <Button onClick={() => handleConfirmPaid(o.id)} className="!py-1 !px-2 text-xs">Получила деньги</Button>}
+                        {o.status === 'unpaid' && o.debtor_id === user?.id && (
+  <Button
+    onClick={() => handleMarkPaid(o)}
+    className="!py-1 !px-2 text-xs"
+  >
+    Я перечислила
+  </Button>
+)}
+                        {o.status === 'payment_pending_confirmation' && o.creditor_id === user?.id && (
+                          <div className="w-full space-y-2">
+                            <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-stone-700">
+                              <div>
+                                Остаток обязательства:{' '}
+                                <b>{Number(o.amount).toLocaleString('ru-RU')} ₽</b>
+                              </div>
+                              <div>
+                                Должник указал платёж:{' '}
+                                <b>{Number(o.pending_payment_amount || 0).toLocaleString('ru-RU')} ₽</b>
+                              </div>
+                              <div className="text-stone-500">
+                                После подтверждения останется:{' '}
+                                <b>
+                                  {Math.max(
+                                    0,
+                                    Number(o.amount) - Number(o.pending_payment_amount || 0)
+                                  ).toLocaleString('ru-RU')}{' '}
+                                  ₽
+                                </b>
+                              </div>
+                            </div>
+
+                            <div className="flex gap-2 flex-wrap">
+                              <Button
+                                onClick={() => handleConfirmPaid(o.id)}
+                                className="!py-1 !px-2 text-xs"
+                              >
+                                Получила деньги
+                              </Button>
+                              <Button
+                                onClick={() => handleRejectPaid(o.id)}
+                                className="!py-1 !px-2 text-xs"
+                              >
+                                Не получила
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                         {o.status === 'unpaid' && o.debtor_id !== user?.id && <span className="text-xs text-amber-600">Не оплачено</span>}
                         {o.status === 'payment_pending_confirmation' && o.creditor_id !== user?.id && <span className="text-xs text-amber-600">Ожидает подтверждения</span>}
                         {o.status === 'settled' && <span className="text-xs text-emerald-600">Погашено</span>}
@@ -372,30 +582,46 @@ export function ExpensesPage() {
       )}
 
       {/* Create expense modal */}
-      <Modal open={showForm} onClose={() => { setShowForm(false); resetForm(); }} title="Новый расход">
+      <Modal
+        open={showForm}
+        onClose={() => {
+          setShowForm(false);
+          resetForm();
+        }}
+        title={editingExpense ? 'Редактировать расход' : 'Новый расход'}
+      >
         <div className="space-y-4">
-          <FormField label="Группа">
-            <select
-              value={selectedGroup}
-              onChange={(e) => handleGroupChange(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl border border-stone-200 bg-white text-stone-800 outline-none focus:border-rose-300 focus:ring-2 focus:ring-rose-100"
-            >
-              <option value="">Выберите группу</option>
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
-          </FormField>
+          {!editingExpense && (
+            <FormField label="Группа">
+              <select
+                value={selectedGroup}
+                onChange={(e) => handleGroupChange(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl border border-stone-200 bg-white text-stone-800 outline-none focus:border-rose-300 focus:ring-2 focus:ring-rose-100"
+              >
+                <option value="">Выберите группу</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </FormField>
+          )}
 
-          <FormField label="Название">
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Например, Такси" autoFocus />
-          </FormField>
+          {!editingExpense && (
+            <FormField label="Название">
+              <Input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Например, Такси"
+                autoFocus
+              />
+            </FormField>
+          )}
 
           <FormField label="Сумма (₽)">
             <Input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" min="0" step="0.01" />
           </FormField>
 
-          {selectedGroup && (groupMembers[selectedGroup] || []).length > 0 && (
+          {!editingExpense && selectedGroup && (groupMembers[selectedGroup] || []).length > 0 && (
             <FormField label="Кто заплатил">
               <select
                 value={paidBy}
@@ -436,18 +662,21 @@ export function ExpensesPage() {
           {selectedGroup && (groupMembers[selectedGroup] || []).length > 0 && (
             <div className="space-y-2">
               <p className="text-sm font-medium text-stone-700">Участницы расхода</p>
-              {(groupMembers[selectedGroup] || []).map((m) => (
+              {(groupMembers[selectedGroup] || [])
+                .filter((m) => !editingExpense || selectedParticipants.has(m.user_id))
+                .map((m) => (
                 <div key={m.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-stone-50">
                   <input
                     type="checkbox"
                     checked={selectedParticipants.has(m.user_id)}
+                    disabled={!!editingExpense}
                     onChange={(e) => {
                       const next = new Set(selectedParticipants);
                       if (e.target.checked) next.add(m.user_id);
                       else next.delete(m.user_id);
                       setSelectedParticipants(next);
                     }}
-                    className="w-4 h-4 rounded accent-rose-400"
+                    className="w-4 h-4 rounded accent-rose-400 disabled:opacity-50"
                   />
                   <span className="text-lg">{m.avatar_emoji || '🌸'}</span>
                   <span className="text-sm text-stone-700 flex-1">{m.display_name || 'Без имени'}</span>
@@ -473,12 +702,86 @@ export function ExpensesPage() {
 
           <div className="flex gap-3 mt-6">
             <Button variant="secondary" onClick={() => { setShowForm(false); resetForm(); }} className="flex-1">Отмена</Button>
-            <Button onClick={handleSave} loading={saving} className="flex-1">Добавить</Button>
+            <Button
+              onClick={editingExpense ? handleUpdate : handleSave}
+              loading={saving}
+              className="flex-1"
+            >
+              {editingExpense ? 'Сохранить' : 'Добавить'}
+            </Button>
           </div>
         </div>
       </Modal>
 
       {/* Settlements modal */}
+      <Modal
+        open={!!paymentObligation}
+        onClose={() => {
+          if (paymentLoading) return;
+          setPaymentObligation(null);
+          setPaymentAmount('');
+          setPaymentError(null);
+        }}
+        title="Внести оплату"
+      >
+        {paymentObligation && (
+          <div className="space-y-4">
+            <div className="rounded-xl bg-stone-50 px-4 py-3">
+              <p className="text-sm text-stone-500">Остаток долга</p>
+              <p className="text-xl font-semibold text-stone-800">
+                {Number(paymentObligation.amount).toLocaleString('ru-RU')} ₽
+              </p>
+            </div>
+
+            <FormField
+              label="Сколько вы перечислили?"
+              error={paymentError || undefined}
+            >
+              <Input
+                type="number"
+                value={paymentAmount}
+                onChange={(e) => {
+                  setPaymentAmount(e.target.value);
+                  setPaymentError(null);
+                }}
+                placeholder="Например, 500"
+                min="0.01"
+                max={Number(paymentObligation.amount)}
+                step="0.01"
+                autoFocus
+              />
+            </FormField>
+
+            <p className="text-xs text-stone-500">
+              Можно внести часть долга. Оставшаяся сумма сохранится как новый остаток.
+            </p>
+
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setPaymentObligation(null);
+                  setPaymentAmount('');
+                  setPaymentError(null);
+                }}
+                disabled={paymentLoading}
+                className="flex-1"
+              >
+                Отмена
+              </Button>
+
+              <Button
+                onClick={handleSubmitPayment}
+                loading={paymentLoading}
+                className="flex-1"
+              >
+                Внести оплату
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <Modal open={showSettlements} onClose={() => setShowSettlements(false)} title="Взаиморасчёты">
         <div className="space-y-3">
           {settlements.length === 0 ? (

@@ -51,5 +51,9 @@ export function formatUserError(err: unknown, fallback: string): string {
     return 'Нет связи с сервером. Проверьте интернет.';
   }
 
+  if (message.includes('нельзя уменьшить долю ниже уже оплаченной суммы')) {
+    return e?.message || 'Нельзя уменьшить долю ниже уже оплаченной суммы.';
+  }
+
   return fallback;
 }
