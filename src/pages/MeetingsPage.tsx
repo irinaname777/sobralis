@@ -272,7 +272,7 @@ export function MeetingsPage() {
       const counter = status === 'counter_proposed' ? { date: counterDate, time: counterTime, location: counterLocation } : undefined;
       if (status === 'counter_proposed' && !counter?.date) { setValidationError('Укажите предложенную дату'); return; }
       await respondToEventInvitation('meeting', meetingId, status, counter);
-      showToast(status === 'accepted' ? 'Участие подтверждено' : status === 'declined' ? 'Вы отказались от встречи' : 'Предложение отправлено организатору');
+      showToast(status === 'accepted' ? 'Участие принято' : status === 'declined' ? 'Вы отказались от встречи' : 'Предложение отправлено организатору');
       loadData();
       setCounterMeeting(null); setCounterDate(''); setCounterTime(''); setCounterLocation('');
     } catch (err) { showToast(formatUserError(err, 'Не удалось обновить ответ')); }

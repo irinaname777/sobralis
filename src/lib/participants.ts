@@ -84,18 +84,31 @@ export async function respondToEventInvitation(
 
 export async function submitTripCounterProposal(
   tripId: string,
-  proposal: { startDate: string; endDate: string; time?: string; location?: string }
+  proposal: { startDate: string; endDate: string; location?: string }
 ) {
   const { error } = await supabase.rpc('submit_trip_counter_proposal', {
     _trip_id: tripId,
     _start_date: proposal.startDate,
     _end_date: proposal.endDate,
-    _time: proposal.time || null,
     _location: proposal.location || null,
   });
   if (error) throw error;
 }
 
 export function invitationStatusLabel(status: string) {
-  return ({ pending: 'Ожидает ответа', accepted: 'Подтверждено', declined: 'Отказ', counter_proposed: 'Предложено изменение' } as Record<string, string>)[status] || status;
+  return ({ pending: 'Ожидает ответа', accepted: 'Участие принято', declined: 'Отказ', counter_proposed: 'Ожидает ответа' } as Record<string, string>)[status] || status;
+}
+
+export function eventCoordinationLabel(status?: string) {
+  return ({ pending: 'На согласовании', confirmed: 'Согласовано', cancelled: 'Отменено' } as Record<string, string>)[status || 'pending'] || status || '';
+}
+
+export function canRespondToEvent(myStatus?: string, eventStatus?: string) {
+  if (!myStatus || myStatus === 'declined') return false;
+  if (eventStatus === 'cancelled') return false;
+  return true;
+}
+
+export function needsConfirmation(myStatus?: string, eventStatus?: string) {
+  return canRespondToEvent(myStatus, eventStatus) && myStatus !== 'accepted';
 }

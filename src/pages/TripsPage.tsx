@@ -23,7 +23,6 @@ export function TripsPage() {
   const [counterTrip, setCounterTrip] = useState<Trip | null>(null);
   const [counterStartDate, setCounterStartDate] = useState('');
   const [counterEndDate, setCounterEndDate] = useState('');
-  const [counterTime, setCounterTime] = useState('');
   const [counterLocation, setCounterLocation] = useState('');
 
   // Form state
@@ -262,13 +261,13 @@ export function TripsPage() {
           setValidationError('Укажите корректные даты поездки');
           return;
         }
-        await submitTripCounterProposal(tripId, { startDate: counterStartDate, endDate: counterEndDate, time: counterTime, location: counterLocation });
+        await submitTripCounterProposal(tripId, { startDate: counterStartDate, endDate: counterEndDate, location: counterLocation });
       } else {
         await respondToEventInvitation('trip', tripId, status);
       }
-      showToast(status === 'accepted' ? 'Участие подтверждено' : status === 'declined' ? 'Вы отказались от поездки' : 'Предложение отправлено организатору');
+      showToast(status === 'accepted' ? 'Участие принято' : status === 'declined' ? 'Вы отказались от поездки' : 'Предложение отправлено организатору');
       loadData();
-      setCounterTrip(null); setCounterStartDate(''); setCounterEndDate(''); setCounterTime(''); setCounterLocation('');
+      setCounterTrip(null); setCounterStartDate(''); setCounterEndDate(''); setCounterLocation('');
     } catch (err) { showToast(formatUserError(err, 'Не удалось обновить ответ')); }
   };
 
@@ -361,8 +360,8 @@ export function TripsPage() {
                           {member?.display_name || 'Участница'} · {invitationStatusLabel(p.status)}
                           {p.status === 'counter_proposed' && (
                             <span className="text-stone-400">
-                              {p.counter_start_date || p.counter_date || p.counter_time || p.counter_location
-                                ? ` (${[p.counter_start_date || p.counter_date, p.counter_end_date, p.counter_time, p.counter_location].filter(Boolean).join(' — ')})`
+                              {p.counter_start_date || p.counter_date || p.counter_location
+                                ? ` (${[p.counter_start_date || p.counter_date, p.counter_end_date, p.counter_location].filter(Boolean).join(' — ')})`
                                 : ''}
                             </span>
                           )}
@@ -375,7 +374,7 @@ export function TripsPage() {
                   <div className="flex flex-wrap gap-2 mt-3">
                     <Button onClick={() => handleResponse(t.id, 'accepted')} className="!py-1.5 !px-3 text-xs">Подтвердить</Button>
                     <Button variant="secondary" onClick={() => handleResponse(t.id, 'declined')} className="!py-1.5 !px-3 text-xs">Отказаться</Button>
-                    <Button variant="secondary" onClick={() => { setCounterTrip(t); setCounterStartDate(t.start_date); setCounterEndDate(t.end_date); setCounterTime(''); setCounterLocation(t.destination || ''); }} className="!py-1.5 !px-3 text-xs">Предложить другое</Button>
+                    <Button variant="secondary" onClick={() => { setCounterTrip(t); setCounterStartDate(t.start_date); setCounterEndDate(t.end_date); setCounterLocation(t.destination || ''); }} className="!py-1.5 !px-3 text-xs">Предложить другое</Button>
                   </div>
                 )}
               </div>
@@ -476,7 +475,6 @@ export function TripsPage() {
             <FormField label="Дата начала"><Input type="date" value={counterStartDate} onChange={(e) => setCounterStartDate(e.target.value)} /></FormField>
             <FormField label="Дата окончания"><Input type="date" value={counterEndDate} onChange={(e) => setCounterEndDate(e.target.value)} /></FormField>
           </div>
-          <FormField label="Время"><Input type="time" value={counterTime} onChange={(e) => setCounterTime(e.target.value)} /></FormField>
           <FormField label="Место"><Input value={counterLocation} onChange={(e) => setCounterLocation(e.target.value)} placeholder="Например, другое направление" /></FormField>
           <div className="flex gap-3"><Button variant="secondary" onClick={() => setCounterTrip(null)} className="flex-1">Отмена</Button><Button onClick={() => counterTrip && handleResponse(counterTrip.id, 'counter_proposed')} className="flex-1">Отправить</Button></div>
         </div>
