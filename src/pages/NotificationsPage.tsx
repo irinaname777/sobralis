@@ -8,8 +8,10 @@ type Notification = { id: string; type: string; payload: { title?: string; amoun
 
 const labels: Record<string, string> = {
   meeting_invitation: 'Вас пригласили на встречу', trip_invitation: 'Вас пригласили в поездку',
-  meeting_accepted: 'Участница подтвердила встречу', meeting_declined: 'Участница отказалась от встречи', meeting_counter_proposed: 'Предложено изменение встречи',
-  trip_accepted: 'Участница подтвердила поездку', trip_declined: 'Участница отказалась от поездки', trip_counter_proposed: 'Предложено изменение поездки',
+  meeting_accepted: 'Участница подтвердила встречу',
+  meeting_confirmed: 'Встреча согласована', meeting_declined: 'Участница отказалась от встречи', meeting_counter_proposed: 'Предложено изменение встречи',
+  trip_accepted: 'Участница подтвердила поездку',
+  trip_confirmed: 'Поездка согласована', trip_declined: 'Участница отказалась от поездки', trip_counter_proposed: 'Предложено изменение поездки',
   expense_debt_created: 'Создано обязательство по расходу', expense_payment_pending: 'Перевод ожидает вашего подтверждения', expense_payment_confirmed: 'Оплата подтверждена',
   group_participant_added: 'В группу добавилась новая участница',
   group_participant_removed: 'Состав группы изменился: участница удалена',
