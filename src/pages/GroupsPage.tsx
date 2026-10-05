@@ -158,22 +158,6 @@ export function GroupsPage() {
     }
   };
 
-  const handlePermanentDelete = async (group: Group) => {
-    if (!confirm('Удалить окончательно? Это необратимо: будут удалены группа, встречи, поездки, расходы и история участников.')) return;
-    const typed = prompt(`Чтобы подтвердить удаление, введите название группы:\n${group.name}`);
-    if (typed !== group.name) {
-      showToast('Удаление отменено');
-      return;
-    }
-    const { error } = await supabase.rpc('permanently_delete_archived_group', { _group_id: group.id });
-    if (!error) {
-      showToast('Группа удалена окончательно');
-      loadData();
-    } else {
-      showToast(formatUserError(error, 'Не удалось удалить группу окончательно'));
-    }
-  };
-
   const activeGroups = groups.filter((group) => group.status === 'active');
   const archivedGroups = groups.filter((group) => group.status === 'archived');
 
@@ -291,13 +275,10 @@ export function GroupsPage() {
                       <button onClick={() => handleRestoreGroup(group.id)} className="p-2 rounded-lg hover:bg-white text-stone-500 transition-colors" title="Восстановить группу">
                         <ArchiveRestore size={18} />
                       </button>
-                      <button onClick={() => handlePermanentDelete(group)} className="p-2 rounded-lg hover:bg-red-50 text-stone-400 hover:text-red-500 transition-colors" title="Удалить окончательно">
-                        <Trash2 size={18} />
-                      </button>
                     </div>
                   )}
                 </div>
-                {isOwner && <p className="text-xs text-stone-500 mt-3">Восстановить или удалить окончательно</p>}
+                {isOwner && <p className="text-xs text-stone-500 mt-3">Восстановить группу</p>}
               </div>
             );
           })}
