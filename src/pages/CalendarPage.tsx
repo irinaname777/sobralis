@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Sparkles, Calendar as CalendarIcon, Coffee, 
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { CycleSettings, Meeting, Trip, Group, GroupMember } from '@/types';
-import { calculatePeriodPredictions, findBestMeetingDates, calculateDateComfort, type DateRating } from '@/lib/cycle/calculator';
+import { calculatePeriodPredictions, calculateDateComfort, type DateRating } from '@/lib/cycle/calculator';
 import { Modal, Input, Button, FormField, EmptyState } from '@/components/ui';
 import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameMonth, addMonths, subMonths, getDay, isToday } from 'date-fns';
 import { ru } from 'date-fns/locale';
@@ -142,28 +142,22 @@ export function CalendarPage() {
 
   const handleFindDates = async () => {
     if (!selectedGroup || selectedMembers.size === 0 || !rangeStart || !rangeEnd) return;
+
     setFinding(true);
     try {
-      // Load cycle settings for selected members
-      const memberIds = Array.from(selectedMembers);
-      const { data: allSettings } = await supabase
-        .from('cycle_settings')
-        .select('*')
-        .in('user_id', memberIds);
+      const { data, error } = await supabase.rpc('find_best_cycle_dates', {
+        _group_id: selectedGroup,
+        _user_ids: Array.from(selectedMembers),
+        _range_start: rangeStart,
+        _range_end: rangeEnd,
+      });
 
-      // Also include my own settings
-      if (cycleSettings) {
-        allSettings?.push(cycleSettings);
-      }
+      if (error) throw error;
 
-      const results = findBestMeetingDates(
-        (allSettings as CycleSettings[]) || [],
-        parseISO(rangeStart),
-        parseISO(rangeEnd),
-        10
-      );
-
-      setBestDates(results);
+      setBestDates((data as DateRating[]) || []);
+    } catch (error) {
+      console.error('Failed to find best dates:', error);
+      setBestDates([]);
     } finally {
       setFinding(false);
     }
