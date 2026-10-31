@@ -23,6 +23,28 @@ GRANT EXECUTE ON FUNCTION public.submit_trip_counter_proposal(uuid, date, date, 
   TO authenticated;
 
 -- Keep payment rejection available to signed-in users.
+CREATE OR REPLACE FUNCTION public.reject_obligation_payment(_obligation_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $function$
+DECLARE
+  v_debtor uuid;
+BEGIN
+  UPDATE public.expense_obligations
+  SET status = 'unpaid', marked_at = NULL
+  WHERE id = _obligation_id
+    AND creditor_id = auth.uid()
+    AND status = 'payment_pending_confirmation'
+  RETURNING debtor_id INTO v_debtor;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Pending payment not found for creditor'; END IF;
+
+  INSERT INTO public.notifications (recipient_id, actor_id, type, entity_type, entity_id)
+  VALUES (v_debtor, auth.uid(), 'expense_payment_rejected', 'expense_obligation', _obligation_id);
+END;
+$function$;
+
 REVOKE ALL ON FUNCTION public.reject_obligation_payment(uuid)
   FROM PUBLIC, anon;
 

@@ -1,14 +1,15 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Users, Plus, Link2, Copy, Check, Trash2, UserPlus, Archive, ArchiveRestore } from 'lucide-react';
+import { Users, Plus, Copy, Check, Trash2, UserPlus, Archive, ArchiveRestore } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Group, GroupMember } from '@/types';
 import { isActiveMember, removeGroupMember } from '@/lib/participants';
 import { Modal, Input, Button, FormField, EmptyState, ErrorMessage, Toast, useAsyncAction } from '@/components/ui';
 import { formatUserError } from '@/lib/errors';
+import { useHashFocus } from '@/lib/useHashFocus';
 
 export function GroupsPage() {
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const [groups, setGroups] = useState<Group[]>([]);
   const [members, setMembers] = useState<Record<string, GroupMember[]>>({});
   const [loading, setLoading] = useState(true);
@@ -17,6 +18,7 @@ export function GroupsPage() {
   const [inviteCode, setInviteCode] = useState('');
   const [copied, setCopied] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  useHashFocus(groups.map((group) => group.id));
 
   // Create group form
   const [groupName, setGroupName] = useState('');
@@ -169,7 +171,7 @@ export function GroupsPage() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-stone-800">Группы</h1>
+          <h1 className="page-title">Группы</h1>
           <p className="text-stone-500 mt-1">Твои компании подруг</p>
         </div>
         <Button onClick={() => setShowCreate(true)} className="!px-3">
@@ -191,17 +193,19 @@ export function GroupsPage() {
             const groupMembers = members[group.id] || [];
             const isOwner = group.owner_id === user?.id;
             return (
-              <div key={group.id} className="bg-white rounded-2xl p-5 shadow-sm border border-stone-100">
+              <div id={group.id} key={group.id} className="surface-card p-4 sm:p-5">
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <h3 className="font-semibold text-stone-800">{group.name}</h3>
                     {group.description && <p className="text-sm text-stone-500 mt-0.5">{group.description}</p>}
+                    <p className="mt-2 text-xs text-stone-400">{groupMembers.length} {groupMembers.length === 1 ? 'участница' : groupMembers.length >= 2 && groupMembers.length <= 4 ? 'участницы' : 'участниц'}</p>
                   </div>
                   <div className="flex gap-1">
                     <button
                       onClick={() => handleCreateInvite(group.id)}
                       className="p-2 rounded-lg hover:bg-stone-100 text-stone-400 transition-colors"
                       title="Пригласить"
+                      aria-label={`Пригласить участницу в группу ${group.name}`}
                     >
                       <UserPlus size={18} />
                     </button>
@@ -234,6 +238,7 @@ export function GroupsPage() {
                         <button
                           onClick={() => handleRemoveMember(m.id)}
                           className="p-1.5 rounded-lg hover:bg-red-50 text-stone-300 hover:text-red-400 transition-colors"
+                          aria-label={`Удалить ${m.display_name || 'участницу'} из группы ${group.name}`}
                         >
                           <Trash2 size={14} />
                         </button>
@@ -242,13 +247,6 @@ export function GroupsPage() {
                   ))}
                 </div>
 
-                <button
-                  onClick={() => handleCreateInvite(group.id)}
-                  className="mt-3 flex items-center gap-2 text-sm text-rose-500 font-medium hover:text-rose-600"
-                >
-                  <Link2 size={14} />
-                  Пригласить подругу
-                </button>
               </div>
             );
           })}
@@ -264,7 +262,7 @@ export function GroupsPage() {
           {archivedGroups.map((group) => {
             const isOwner = group.owner_id === user?.id;
             return (
-              <div key={group.id} className="bg-stone-50 rounded-2xl p-5 border border-stone-200">
+              <div id={group.id} key={group.id} className="bg-stone-50 rounded-2xl p-5 border border-stone-200">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <h3 className="font-semibold text-stone-700">{group.name}</h3>

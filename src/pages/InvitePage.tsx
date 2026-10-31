@@ -59,10 +59,6 @@ export function InvitePage() {
           return;
         }
 
-        if (user && row.used_by && row.used_by !== user.id) {
-          setBlockedReason('Это приглашение уже использовано');
-        }
-
         if (user) {
           const { data: existing } = await supabase
             .from('group_members')

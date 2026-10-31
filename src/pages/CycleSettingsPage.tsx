@@ -1,14 +1,19 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Heart, AlertCircle, Trash2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { CycleSettings, PrivacyLevel } from '@/types';
 import { Input, Button, FormField, ErrorMessage, Toast, useAsyncAction } from '@/components/ui';
+import { hasCurrentHealthDataConsent, saveCycleSettings, setHealthDataConsent } from '@/lib/legalConsents';
 
 export function CycleSettingsPage() {
   const { user } = useAuth();
   const [settings, setSettings] = useState<CycleSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [healthConsentGranted, setHealthConsentGranted] = useState(false);
+  const [consentUpdating, setConsentUpdating] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   // Form state
@@ -27,15 +32,42 @@ export function CycleSettingsPage() {
   };
 
   useEffect(() => {
+    let active = true;
+
     (async () => {
-      if (!user) return;
+      if (!user) {
+        setHealthConsentGranted(false);
+        setSettings(null);
+        setTrackingEnabled(false);
+        setLastPeriod('');
+        setCycleLength('28');
+        setPeriodLength('5');
+        setPrivacy('hidden');
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
-        const { data } = await supabase
+        const consentGranted = await hasCurrentHealthDataConsent(user.id);
+        if (!active) return;
+        setHealthConsentGranted(consentGranted);
+
+        if (!consentGranted) {
+          setSettings(null);
+          setTrackingEnabled(false);
+          setLastPeriod('');
+          setCycleLength('28');
+          setPeriodLength('5');
+          setPrivacy('hidden');
+          return;
+        }
+
+        const { data, error } = await supabase
           .from('cycle_settings')
           .select('*')
           .eq('user_id', user.id)
           .maybeSingle();
+        if (error) throw error;
 
         if (data) {
           const s = data as CycleSettings;
@@ -46,11 +78,68 @@ export function CycleSettingsPage() {
           setPeriodLength(String(s.period_length));
           setPrivacy(s.privacy_level);
         }
+      } catch {
+        if (active) {
+          setHealthConsentGranted(false);
+          setSettings(null);
+          setTrackingEnabled(false);
+          setLastPeriod('');
+          setCycleLength('28');
+          setPeriodLength('5');
+          setPrivacy('hidden');
+          setConsentError('Не удалось проверить отдельное согласие. Данные цикла не загружены.');
+        }
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     })();
+
+    return () => { active = false; };
   }, [user]);
+
+  const handleHealthConsentChange = async (granted: boolean) => {
+    if (!user || consentUpdating || granted === healthConsentGranted) return;
+    setConsentUpdating(true);
+    setConsentError(null);
+    setValidationError(null);
+    try {
+      await setHealthDataConsent(granted);
+      setHealthConsentGranted(granted);
+
+      if (!granted) {
+        setSettings(null);
+        setTrackingEnabled(false);
+        setLastPeriod('');
+        setCycleLength('28');
+        setPeriodLength('5');
+        setPrivacy('hidden');
+        showToast('Согласие отозвано, обработка данных цикла отключена');
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('cycle_settings')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (error) throw error;
+
+      if (data) {
+        const next = data as CycleSettings;
+        setSettings(next);
+        setTrackingEnabled(next.tracking_enabled);
+        setLastPeriod(next.last_period_start || '');
+        setCycleLength(String(next.average_cycle_length));
+        setPeriodLength(String(next.period_length));
+        setPrivacy(next.privacy_level);
+      }
+      showToast('Отдельное согласие сохранено');
+    } catch {
+      setConsentError('Не удалось сохранить решение по согласию.');
+    } finally {
+      setConsentUpdating(false);
+    }
+  };
 
   const validate = (): boolean => {
     setValidationError(null);
@@ -75,21 +164,18 @@ export function CycleSettingsPage() {
 
   const handleSave = async () => {
     if (!user || !validate()) return;
+    if (!healthConsentGranted) {
+      setValidationError('Для работы с данными цикла требуется отдельное согласие.');
+      return;
+    }
     const result = await runSave(async () => {
-      const payload = {
-        user_id: user.id,
-        tracking_enabled: trackingEnabled,
-        last_period_start: trackingEnabled ? lastPeriod : null,
-        average_cycle_length: parseInt(cycleLength) || 28,
-        period_length: parseInt(periodLength) || 5,
-        privacy_level: privacy,
-      };
-
-      const { error } = await supabase
-        .from('cycle_settings')
-        .upsert(payload, { onConflict: 'user_id' });
-
-      if (error) throw error;
+      await saveCycleSettings({
+        trackingEnabled,
+        lastPeriodStart: trackingEnabled ? lastPeriod : null,
+        averageCycleLength: parseInt(cycleLength) || 28,
+        periodLength: parseInt(periodLength) || 5,
+        privacyLevel: privacy,
+      });
     });
 
     if (result !== null) {
@@ -98,14 +184,13 @@ export function CycleSettingsPage() {
   };
 
   const handleDelete = async () => {
-    if (!user || !settings) return;
-    if (!confirm('Удалить все данные цикла?')) return;
+    if (!user) return;
+    if (!confirm('Удалить все сохранённые данные цикла? Это действие нельзя отменить.')) return;
+
     const result = await runDelete(async () => {
-      const { error } = await supabase
-        .from('cycle_settings')
-        .delete()
-        .eq('user_id', user.id);
+      const { data, error } = await supabase.rpc('delete_cycle_settings');
       if (error) throw error;
+      return data;
     });
 
     if (result !== null) {
@@ -115,7 +200,9 @@ export function CycleSettingsPage() {
       setCycleLength('28');
       setPeriodLength('5');
       setPrivacy('hidden');
-      showToast('Данные цикла удалены');
+      showToast(result
+        ? 'Сохранённые данные цикла удалены'
+        : 'Сохранённых данных цикла не найдено');
     }
   };
 
@@ -139,6 +226,41 @@ export function CycleSettingsPage() {
       </div>
 
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-stone-100 space-y-5">
+        <div className="space-y-2 border-b border-stone-100 pb-5">
+          <label className="flex items-start gap-3 text-sm text-stone-700">
+            <input
+              type="checkbox"
+              checked={healthConsentGranted}
+              disabled={consentUpdating || loading}
+              onChange={(event) => { void handleHealthConsentChange(event.target.checked); }}
+              className="mt-1 accent-rose-500"
+            />
+            <span>
+              Я даю отдельное согласие на обработку сведений о состоянии здоровья для работы функции подбора подходящих дат.{' '}
+              <Link to="/legal/health-data-consent" className="text-rose-600 underline">
+                Согласие на обработку персональных данных о состоянии здоровья
+              </Link>.
+            </span>
+          </label>
+          <p className="pl-7 text-xs text-stone-500">
+            Без отдельного согласия сведения цикла не загружаются и не используются. Отказ не ограничивает остальные функции сервиса.
+          </p>
+          {consentError && <ErrorMessage message={consentError} />}
+        </div>
+
+        {!healthConsentGranted && (
+          <div className="space-y-3">
+            <p className="text-sm text-stone-500">
+              Учёт цикла отключён. Сохранённые данные не используются и остаются скрытыми. Их можно удалить вручную.
+            </p>
+            <Button variant="danger" onClick={handleDelete} loading={deleting}>
+              <Trash2 size={16} />
+              Удалить сохранённые данные цикла
+            </Button>
+          </div>
+        )}
+
+        {healthConsentGranted && <>
         {/* Tracking toggle */}
         <div className="flex items-center justify-between">
           <div>
@@ -228,6 +350,7 @@ export function CycleSettingsPage() {
             </Button>
           )}
         </div>
+        </>}
       </div>
 
       {toast && <Toast message={toast} />}

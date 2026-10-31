@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { CycleSettings, Meeting, Trip, Group, GroupMember } from '@/types';
 import { calculatePeriodPredictions, calculateDateComfort, type DateRating } from '@/lib/cycle/calculator';
 import { Modal, Input, Button, FormField, EmptyState } from '@/components/ui';
+import { hasCurrentHealthDataConsent } from '@/lib/legalConsents';
 import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameMonth, addMonths, subMonths, getDay, isToday } from 'date-fns';
 import { ru } from 'date-fns/locale';
 
@@ -14,6 +15,8 @@ type CalendarEvent = {
   label: string;
   color: string;
 };
+
+const CYCLE_DATE_FINDER_ENABLED = false;
 
 export function CalendarPage() {
   const { user } = useAuth();
@@ -39,13 +42,18 @@ export function CalendarPage() {
       if (!user) return;
       setLoading(true);
       try {
-        // Load cycle settings
-        const { data: cs } = await supabase
-          .from('cycle_settings')
-          .select('*')
-          .eq('user_id', user.id)
-          .maybeSingle();
-        setCycleSettings(cs as CycleSettings | null);
+        const hasHealthConsent = await hasCurrentHealthDataConsent(user.id).catch(() => false);
+        if (hasHealthConsent) {
+          const { data: cs, error: cycleError } = await supabase
+            .from('cycle_settings')
+            .select('*')
+            .eq('user_id', user.id)
+            .maybeSingle();
+          if (cycleError) throw cycleError;
+          setCycleSettings(cs as CycleSettings | null);
+        } else {
+          setCycleSettings(null);
+        }
 
         // Load groups
         const { data: memberRows } = await supabase
@@ -141,7 +149,7 @@ export function CalendarPage() {
   }, [cycleSettings, meetings, trips, currentMonth]);
 
   const handleFindDates = async () => {
-    if (!selectedGroup || selectedMembers.size === 0 || !rangeStart || !rangeEnd) return;
+    if (!CYCLE_DATE_FINDER_ENABLED || !selectedGroup || selectedMembers.size === 0 || !rangeStart || !rangeEnd) return;
 
     setFinding(true);
     try {
@@ -156,7 +164,10 @@ export function CalendarPage() {
 
       setBestDates((data as DateRating[]) || []);
     } catch (error) {
-      console.error('Failed to find best dates:', error);
+      if (import.meta.env.DEV) {
+        const errorType = error instanceof Error ? error.name : typeof error;
+        console.error('Failed to find best dates. Error type:', errorType);
+      }
       setBestDates([]);
     } finally {
       setFinding(false);
@@ -176,10 +187,18 @@ export function CalendarPage() {
           <h1 className="text-2xl font-bold text-stone-800">Календарь</h1>
           <p className="text-stone-500 mt-1">Встречи, поездки и цикл</p>
         </div>
-        <Button onClick={() => setShowFinder(true)} className="!px-3">
-          <Sparkles size={18} className="sm:mr-1" />
-          <span className="hidden sm:inline">Найти дату</span>
-        </Button>
+        {CYCLE_DATE_FINDER_ENABLED ? (
+          <Button onClick={() => setShowFinder(true)} className="!px-3">
+            <Sparkles size={18} className="sm:mr-1" />
+            <span className="hidden sm:inline">Найти дату</span>
+          </Button>
+        ) : (
+          <Button disabled className="!px-3">
+            <Sparkles size={18} className="sm:mr-1" />
+            <span className="hidden sm:inline">Подбор дат временно недоступен</span>
+            <span className="sm:hidden">Недоступно</span>
+          </Button>
+        )}
       </div>
 
       {/* Calendar */}
@@ -259,10 +278,12 @@ export function CalendarPage() {
 
       {/* Legend */}
       <div className="flex flex-wrap gap-4 text-sm text-stone-500">
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded bg-rose-100" />
-          <span>Менструация</span>
-        </div>
+        {cycleSettings?.tracking_enabled && (
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded bg-rose-100" />
+            <span>Менструация</span>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded bg-blue-100" />
           <span>Встречи</span>

@@ -30,3 +30,18 @@ supabase/.temp/
 
 # Local Docker environment
 .env.docker
+
+# Local backups that may contain secrets or diagnostic changes
+/.env.local.before-anon-key-fix
+/.env.local.before-selfhosted
+/.env.server-test
+/src/components/AppLayout.tsx.before-insert-diagnostics
+/src/components/AppLayout.tsx.before-realtime-diagnostics
+/src/lib/errors.ts.before-schedule-conflict
+.aider*
+
+# Локальные документы — не публиковать
+/docs/
+
+# Local environment backups
+.env.save

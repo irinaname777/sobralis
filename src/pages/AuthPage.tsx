@@ -13,6 +13,10 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resetSent, setResetSent] = useState(false);
+  const [ageAndAgreement, setAgeAndAgreement] = useState(false);
+  const [personalDataConsent, setPersonalDataConsent] = useState(false);
+  const [healthDataConsent, setHealthDataConsent] = useState(false);
+  const [advertisingConsent, setAdvertisingConsent] = useState(false);
 
   const isLogin = mode === 'login';
 
@@ -30,6 +34,11 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
       return;
     }
 
+    if (!isLogin && (!ageAndAgreement || !personalDataConsent)) {
+      setError('Подтвердите возраст, условия документов и согласие на обработку персональных данных');
+      return;
+    }
+
     setLoading(true);
     try {
       if (isLogin) {
@@ -37,13 +46,30 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
         if (error) throw error;
         navigate(postAuthPath(false));
       } else {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              sobralis_consents: {
+                age_confirmed: ageAndAgreement,
+                user_agreement: ageAndAgreement,
+                license: ageAndAgreement,
+                personal_data: personalDataConsent,
+                health_data: healthDataConsent,
+                advertising: advertisingConsent,
+              },
+            },
+          },
+        });
         if (error) throw error;
         navigate(postAuthPath(true));
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
-      if (msg.includes('Invalid login')) {
+      if (!isLogin && msg.includes('signup_consents_required')) {
+        setError('Подтвердите возраст, условия документов и согласие на обработку персональных данных');
+      } else if (msg.includes('Invalid login')) {
         setError('Неверный email или пароль');
       } else if (msg.includes('already registered') || msg.includes('already been registered')) {
         setError('Пользователь с таким email уже существует');
@@ -124,6 +150,83 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
                 />
               </div>
             </div>
+
+            {!isLogin && (
+                <fieldset className="space-y-3 border-t border-stone-100 pt-4">
+                  <legend className="mb-1 text-sm font-semibold text-stone-800">
+                    Подтверждения и согласия
+                  </legend>
+
+                  <label className="flex items-start gap-2 text-sm text-stone-700">
+                    <input
+                      type="checkbox"
+                      checked={ageAndAgreement}
+                      onChange={(event) => setAgeAndAgreement(event.target.checked)}
+                      className="mt-1 accent-rose-500"
+                    />
+                    <span>
+                      Мне исполнилось 18 лет, я принимаю{" "}
+                      <Link to="/legal/user-agreement" target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-rose-600 underline">
+                        Пользовательское соглашение
+                      </Link>
+                      {" "}и{" "}
+                      <Link to="/legal/license" target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-rose-600 underline">
+                        Лицензионную оферту
+                      </Link>.
+                    </span>
+                  </label>
+
+                  <label className="flex items-start gap-2 text-sm text-stone-700">
+                    <input
+                      type="checkbox"
+                      checked={personalDataConsent}
+                      onChange={(event) => setPersonalDataConsent(event.target.checked)}
+                      className="mt-1 accent-rose-500"
+                    />
+                    <span>
+                      Даю{" "}
+                      <Link to="/legal/personal-data-consent" target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-rose-600 underline">
+                        согласие на обработку персональных данных
+                      </Link>
+                      .{" "}Ознакомился(ась) с{" "}
+                      <Link to="/legal/privacy" target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-rose-600 underline">
+                        Политикой обработки персональных данных
+                      </Link>.
+                    </span>
+                  </label>
+
+                  <label className="flex items-start gap-2 text-sm text-stone-700">
+                    <input
+                      type="checkbox"
+                      checked={advertisingConsent}
+                      onChange={(event) => setAdvertisingConsent(event.target.checked)}
+                      className="mt-1 accent-rose-500"
+                    />
+                    <span>
+                      Даю{" "}
+                      <Link to="/legal/advertising-consent" target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-rose-600 underline">
+                        согласие на получение рекламы
+                      </Link>.
+                    </span>
+                  </label>
+
+                  <label className="flex items-start gap-2 text-sm text-stone-700">
+                    <input
+                      type="checkbox"
+                      checked={healthDataConsent}
+                      onChange={(event) => setHealthDataConsent(event.target.checked)}
+                      className="mt-1 accent-rose-500"
+                    />
+                    <span>
+                      Даю{" "}
+                      <Link to="/legal/health-data-consent" target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-rose-600 underline">
+                        согласие на обработку данных о здоровье
+                      </Link>
+                      {" "}для подбора комфортных дат.
+                    </span>
+                  </label>
+                </fieldset>
+            )}
 
             {error && <ErrorMessage message={error} />}
 

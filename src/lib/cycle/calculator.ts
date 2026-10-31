@@ -120,8 +120,6 @@ export function findBestMeetingDates(
   );
 
   const dateRatings: DateRating[] = [];
-  const totalUsers = activeSettings.length || 1;
-
   const cursor = new Date(rangeStart);
   while (cursor <= rangeEnd) {
     let totalScore = 0;
