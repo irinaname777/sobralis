@@ -42,3 +42,6 @@ supabase/.temp/
 
 # Локальные документы — не публиковать
 /docs/
+
+# Local environment backups
+.env.save
