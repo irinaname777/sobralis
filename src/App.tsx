@@ -13,6 +13,7 @@ import { TripsPage } from '@/pages/TripsPage';
 import { ExpensesPage } from '@/pages/ExpensesPage';
 import { ProfilePage } from '@/pages/ProfilePage';
 import { InvitePage } from '@/pages/InvitePage';
+import LandingPage from '@/pages/LandingPage';
 import { NotificationsPage } from '@/pages/NotificationsPage';
 import type { ReactNode } from 'react';
 
@@ -57,6 +58,7 @@ function OnboardingGate({ children }: { children: ReactNode }) {
 function AppRoutes() {
   return (
     <Routes>
+      <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<AuthPage mode="login" />} />
       <Route path="/signup" element={<AuthPage mode="signup" />} />
       <Route path="/onboarding" element={<OnboardingPage />} />
@@ -70,7 +72,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route path="/" element={<DashboardPage />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/groups" element={<GroupsPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/cycle" element={<CycleSettingsPage />} />
