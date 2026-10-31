@@ -4,6 +4,13 @@
 
 @layer base {
   :root {
+    color-scheme: light;
+    --sobralis-background: #fafaf9;
+    --sobralis-ink: #292524;
+    --sobralis-dusty-rose: #bd858b;
+    --sobralis-warm-beige: #f8f3f0;
+    --sobralis-surface: #ffffff;
+    --sobralis-border: #eee9e6;
     --color-rose-50: #fff1f2;
     --color-rose-100: #ffe4e6;
     --color-rose-200: #fecdd3;
@@ -14,11 +21,53 @@
 
   body {
     @apply bg-stone-50 text-stone-800 antialiased;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background-color: var(--sobralis-background);
+    color: var(--sobralis-ink);
+    font-family: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    text-rendering: optimizeLegibility;
   }
 
   * {
     -webkit-tap-highlight-color: transparent;
+  }
+
+  :focus-visible {
+    outline: 3px solid rgb(244 63 94 / 55%);
+    outline-offset: 2px;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  button:not(:disabled),
+  a[href],
+  input[type='checkbox'] {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  .surface-card {
+    @apply rounded-2xl border bg-white shadow-sm;
+    border-color: var(--sobralis-border);
+    box-shadow: 0 1px 2px rgb(41 37 36 / 4%), 0 8px 24px rgb(41 37 36 / 3%);
+  }
+
+  .page-title {
+    @apply text-2xl font-bold tracking-tight text-stone-800 sm:text-3xl;
+  }
+
+  .section-title {
+    @apply text-sm font-semibold uppercase tracking-wide text-stone-500;
+  }
+
+  .soft-panel {
+    background: var(--sobralis-warm-beige);
   }
 }
 

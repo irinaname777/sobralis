@@ -9,6 +9,7 @@ import { formatUserError } from '@/lib/errors';
 import { findScheduleConflicts, suggestFreeSlots, formatConflictHint } from '@/lib/schedule';
 import { format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
+import { useHashFocus } from '@/lib/useHashFocus';
 
 export function TripsPage() {
   const { user } = useAuth();
@@ -24,6 +25,7 @@ export function TripsPage() {
   const [counterStartDate, setCounterStartDate] = useState('');
   const [counterEndDate, setCounterEndDate] = useState('');
   const [counterLocation, setCounterLocation] = useState('');
+  useHashFocus(trips.map((trip) => trip.id));
 
   // Form state
   const [selectedGroup, setSelectedGroup] = useState('');
@@ -145,7 +147,7 @@ export function TripsPage() {
     setEndDate(trip.end_date);
     setNotes(trip.notes || '');
     const parts = participants[trip.id] || [];
-    setSelectedParticipants(withOrganizer(parts.map((p) => p.user_id), user?.id || trip.created_by));
+    setSelectedParticipants(withOrganizer(parts.map((p) => p.user_id), user?.id || trip.created_by || ''));
     setShowForm(true);
     try {
       await loadMembersForGroup(trip.group_id);
@@ -279,7 +281,7 @@ export function TripsPage() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-stone-800">Поездки</h1>
+          <h1 className="page-title">Поездки</h1>
           <p className="text-stone-500 mt-1">Планируйте путешествия вместе</p>
         </div>
         <Button onClick={openCreateForm} disabled={groups.filter((g) => g.status !== 'archived').length === 0} className="!px-3">
@@ -306,29 +308,33 @@ export function TripsPage() {
           {trips.map((t) => {
             const parts = participants[t.id] || [];
             const groupMembersList = groupMembers[t.group_id] || [];
+            const eventStatus = t.status === 'confirmed' ? 'Согласована' : t.status === 'cancelled' ? 'Отменена' : 'Ожидает ответов';
             return (
-              <div key={t.id} className="bg-white rounded-2xl p-5 shadow-sm border border-stone-100">
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex-1 min-w-0">
+              <div id={t.id} key={t.id} className="surface-card p-5">
+                <div className="mb-3 flex flex-wrap items-start gap-2 sm:flex-nowrap">
+                  <div className="min-w-[130px] flex-1">
                     <h3 className="font-semibold text-stone-800">{t.title}</h3>
                     <p className="text-xs text-stone-400 mt-0.5">{t.group_name}</p>
                   </div>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${t.status === 'confirmed' ? 'bg-emerald-50 text-emerald-700' : t.status === 'cancelled' ? 'bg-stone-100 text-stone-500' : 'bg-amber-50 text-amber-700'}`} aria-label={`Статус поездки: ${eventStatus}`}>{eventStatus}</span>
                   {t.created_by === user?.id && (
-                  <div className="flex gap-1">
+                  <div className="ml-auto flex gap-1">
                     <button
                       type="button"
                       onClick={() => openEditForm(t)}
                       className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg hover:bg-stone-100 text-stone-500 transition-colors text-xs font-medium"
                       title="Редактировать"
+                      aria-label={`Редактировать поездку ${t.title}`}
                     >
                       <Pencil size={14} />
-                      Редактировать
+                      <span className="hidden sm:inline">Редактировать</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => handleDelete(t)}
                       className="p-2 rounded-lg hover:bg-red-50 text-stone-400 hover:text-red-400 transition-colors"
                       title="Удалить"
+                      aria-label={`Удалить поездку ${t.title}`}
                     >
                       <Trash2 size={16} />
                     </button>

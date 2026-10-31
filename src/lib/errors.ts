@@ -6,6 +6,8 @@ type SupabaseLikeError = {
 };
 
 export function logSupabaseError(err: unknown) {
+  if (!import.meta.env.DEV) return;
+
   const e = err as SupabaseLikeError;
   console.error('Supabase error:', {
     message: e?.message,
@@ -32,6 +34,9 @@ export function formatUserError(err: unknown, fallback: string): string {
   if (message.includes('invite_not_found') || message.includes('p0002')) {
     return 'Приглашение не найдено.';
   }
+  if (message.includes('schedule_conflict')) {
+    return 'Этот вариант пересекается с другим планом участницы. Выберите другую дату или время.';
+  }
   if (message.includes('invite_expired')) {
     return 'Срок действия приглашения истёк.';
   }
@@ -52,7 +57,7 @@ export function formatUserError(err: unknown, fallback: string): string {
   }
 
   if (message.includes('нельзя уменьшить долю ниже уже оплаченной суммы')) {
-    return e?.message || 'Нельзя уменьшить долю ниже уже оплаченной суммы.';
+    return 'Нельзя уменьшить долю ниже уже оплаченной суммы.';
   }
 
   return fallback;

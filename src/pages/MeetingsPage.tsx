@@ -9,6 +9,7 @@ import { formatUserError } from '@/lib/errors';
 import { findScheduleConflicts, suggestFreeSlots, formatConflictHint } from '@/lib/schedule';
 import { format, parseISO, isToday, isFuture, isPast } from 'date-fns';
 import { ru } from 'date-fns/locale';
+import { useHashFocus } from '@/lib/useHashFocus';
 
 export function MeetingsPage() {
   const { user } = useAuth();
@@ -24,6 +25,7 @@ export function MeetingsPage() {
   const [counterDate, setCounterDate] = useState('');
   const [counterTime, setCounterTime] = useState('');
   const [counterLocation, setCounterLocation] = useState('');
+  useHashFocus(meetings.map((meeting) => meeting.id));
 
   // Form state
   const [selectedGroup, setSelectedGroup] = useState('');
@@ -146,7 +148,7 @@ export function MeetingsPage() {
     setLocation(meeting.location || '');
     setDescription(meeting.description || '');
     const parts = participants[meeting.id] || [];
-    setSelectedParticipants(withOrganizer(parts.map((p) => p.user_id), user?.id || meeting.created_by));
+    setSelectedParticipants(withOrganizer(parts.map((p) => p.user_id), user?.id || meeting.created_by || ''));
     setShowForm(true);
     try {
       await loadMembersForGroup(meeting.group_id);
@@ -291,29 +293,33 @@ export function MeetingsPage() {
   const renderMeeting = (m: Meeting & { group_name?: string }) => {
     const parts = participants[m.id] || [];
     const groupMembersList = groupMembers[m.group_id] || [];
+    const eventStatus = m.status === 'confirmed' ? 'Согласована' : m.status === 'cancelled' ? 'Отменена' : 'Ожидает ответов';
     return (
-      <div key={m.id} className="bg-white rounded-2xl p-5 shadow-sm border border-stone-100">
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex-1 min-w-0">
+      <div id={m.id} key={m.id} className="surface-card p-5">
+        <div className="mb-3 flex flex-wrap items-start gap-2 sm:flex-nowrap">
+          <div className="min-w-[130px] flex-1">
             <h3 className="font-semibold text-stone-800">{m.title}</h3>
             <p className="text-xs text-stone-400 mt-0.5">{m.group_name}</p>
           </div>
+          <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${m.status === 'confirmed' ? 'bg-emerald-50 text-emerald-700' : m.status === 'cancelled' ? 'bg-stone-100 text-stone-500' : 'bg-amber-50 text-amber-700'}`} aria-label={`Статус встречи: ${eventStatus}`}>{eventStatus}</span>
           {m.created_by === user?.id && (
-          <div className="flex gap-1">
+          <div className="ml-auto flex gap-1">
             <button
               type="button"
               onClick={() => openEditForm(m)}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg hover:bg-stone-100 text-stone-500 transition-colors text-xs font-medium"
               title="Редактировать"
+              aria-label={`Редактировать встречу ${m.title}`}
             >
               <Pencil size={14} />
-              Редактировать
+              <span className="hidden sm:inline">Редактировать</span>
             </button>
             <button
               type="button"
               onClick={() => handleDelete(m)}
               className="p-2 rounded-lg hover:bg-red-50 text-stone-400 hover:text-red-400 transition-colors"
               title="Удалить"
+              aria-label={`Удалить встречу ${m.title}`}
             >
               <Trash2 size={16} />
             </button>
@@ -374,7 +380,7 @@ export function MeetingsPage() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-stone-800">Встречи</h1>
+          <h1 className="page-title">Встречи</h1>
           <p className="text-stone-500 mt-1">Планируйте встречи с подругами</p>
         </div>
         <Button onClick={openCreateForm} disabled={groups.filter((g) => g.status !== 'archived').length === 0} className="!px-3">

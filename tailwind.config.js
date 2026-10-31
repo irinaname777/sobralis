@@ -4,7 +4,7 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        sans: ['Inter Variable', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
       },
       colors: {
         primary: {
@@ -16,6 +16,10 @@ export default {
           500: '#f43f5e',
           600: '#e11d48',
           700: '#be123c',
+        },
+        dusty: '#bd858b',
+        warm: {
+          beige: '#f8f3f0',
         },
       },
       animation: {

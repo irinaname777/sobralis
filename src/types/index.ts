@@ -12,7 +12,7 @@ export type Group = {
   id: string;
   name: string;
   description: string | null;
-  owner_id: string;
+  owner_id: string | null;
   status: 'active' | 'archived';
   created_at: string;
   updated_at: string;
@@ -61,7 +61,7 @@ export type Meeting = {
   meeting_time: string | null;
   location: string | null;
   description: string | null;
-  created_by: string;
+  created_by: string | null;
   status?: EventCoordinationStatus;
   created_at: string;
   updated_at: string;
@@ -86,7 +86,7 @@ export type Trip = {
   start_date: string;
   end_date: string;
   notes: string | null;
-  created_by: string;
+  created_by: string | null;
   status?: EventCoordinationStatus;
   created_at: string;
   updated_at: string;
@@ -128,9 +128,23 @@ export type ExpenseParticipant = {
 
 export type ExpenseObligation = {
   id: string; expense_id: string; debtor_id: string; creditor_id: string; amount: number;
-  pending_payment_amount: number | null;
+  paid_amount: number; pending_payment_amount: number | null;
   status: 'unpaid' | 'payment_pending_confirmation' | 'settled' | 'archived';
   marked_at: string | null; confirmed_at: string | null;
+};
+
+export type ExpensePayment = {
+  id: string;
+  obligation_id: string;
+  amount: number;
+  status: 'pending' | 'confirmed' | 'rejected';
+  created_by: string;
+  request_id: string;
+  created_at: string;
+  confirmed_at: string | null;
+  rejected_at: string | null;
+  confirmed_by: string | null;
+  rejected_by: string | null;
 };
 
 export type PrivacyLevel = 'full' | 'comfort' | 'hidden';

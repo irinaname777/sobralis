@@ -192,7 +192,14 @@ export function AppLayout() {
           setPopupNotification(payload.new as PopupNotification);
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        if (import.meta.env.DEV) {
+          console.info('[Realtime popup] status:', status);
+          if (err) {
+            console.error('[Realtime popup] error:', err);
+          }
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);

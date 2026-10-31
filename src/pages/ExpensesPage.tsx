@@ -1,18 +1,20 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Receipt, Plus, Trash2, Pencil, ArrowRight, TrendingUp, TrendingDown } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import type { Expense, ExpenseParticipant, ExpenseObligation, Group, GroupMember } from '@/types';
+import type { Expense, ExpenseParticipant, ExpenseObligation, ExpensePayment, Group, GroupMember } from '@/types';
 import { calculateBalances, optimizeDebts, calculateEqualShares, type DebtSettlement } from '@/lib/expenses/debtCalculator';
 import { Modal, Input, Button, FormField, EmptyState, ErrorMessage, Toast, useAsyncAction } from '@/components/ui';
 import { format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
+import { useHashFocus } from '@/lib/useHashFocus';
 
 export function ExpensesPage() {
   const { user } = useAuth();
   const [expenses, setExpenses] = useState<(Expense & { group_name?: string })[]>([]);
   const [expenseParts, setExpenseParts] = useState<Record<string, ExpenseParticipant[]>>({});
   const [obligations, setObligations] = useState<ExpenseObligation[]>([]);
+  const [paymentHistory, setPaymentHistory] = useState<Record<string, ExpensePayment[]>>({});
   const [groups, setGroups] = useState<Group[]>([]);
   const [groupMembers, setGroupMembers] = useState<Record<string, GroupMember[]>>({});
   const [loading, setLoading] = useState(true);
@@ -24,6 +26,8 @@ export function ExpensesPage() {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const paymentAttemptRef = useRef<{ requestId: string; amount: number } | null>(null);
+  useHashFocus([...expenses.map((expense) => expense.id), ...obligations.map((obligation) => obligation.id)]);
 
   // Form state
   const [selectedGroup, setSelectedGroup] = useState('');
@@ -41,8 +45,20 @@ export function ExpensesPage() {
     setTimeout(() => setToast(null), 2500);
   };
 
+  const getActiveGroupMembers = (groupId: string) =>
+    (groupMembers[groupId] || []).filter((member) => !member.status || member.status === 'active');
+
   const loadData = useCallback(async () => {
-    if (!user) return;
+    if (!user) {
+      setExpenses([]);
+      setGroups([]);
+      setExpenseParts({});
+      setObligations([]);
+      setPaymentHistory({});
+      setGroupMembers({});
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const { data: memberRows } = await supabase
@@ -54,6 +70,10 @@ export function ExpensesPage() {
       if (groupIds.length === 0) {
         setExpenses([]);
         setGroups([]);
+        setExpenseParts({});
+        setObligations([]);
+        setPaymentHistory({});
+        setGroupMembers({});
         setLoading(false);
         return;
       }
@@ -91,7 +111,27 @@ export function ExpensesPage() {
           .select('*')
           .in('expense_id', expWithGroup.map((e) => e.id))
           .order('created_at', { ascending: false });
-        setObligations((obligationData as ExpenseObligation[]) || []);
+        const loadedObligations = (obligationData as ExpenseObligation[]) || [];
+        setObligations(loadedObligations);
+        const obligationIds = loadedObligations.map((obligation) => obligation.id);
+        if (obligationIds.length > 0) {
+          const { data: paymentRows } = await supabase
+            .from('expense_payments')
+            .select('*')
+            .in('obligation_id', obligationIds)
+            .order('created_at', { ascending: true });
+          const paymentMap: Record<string, ExpensePayment[]> = {};
+          for (const payment of (paymentRows as ExpensePayment[]) || []) {
+            (paymentMap[payment.obligation_id] ||= []).push(payment);
+          }
+          setPaymentHistory(paymentMap);
+        } else {
+          setPaymentHistory({});
+        }
+      } else {
+        setExpenseParts({});
+        setObligations([]);
+        setPaymentHistory({});
       }
 
       const { data: allMembers } = await supabase
@@ -151,20 +191,22 @@ export function ExpensesPage() {
 
   const handleGroupChange = (groupId: string) => {
     setSelectedGroup(groupId);
-    const members = groupMembers[groupId] || [];
+    const members = getActiveGroupMembers(groupId);
     setSelectedParticipants(new Set(members.map((m) => m.user_id)));
     setManualShares({});
     if (members.length > 0) setPaidBy(user?.id || '');
   };
 
   const openEditForm = (expense: Expense) => {
-    const parts = expenseParts[expense.id] || [];
+    const activeMembers = getActiveGroupMembers(expense.group_id);
+    const activeIds = new Set(activeMembers.map((member) => member.user_id));
+    const parts = (expenseParts[expense.id] || []).filter((part) => activeIds.has(part.user_id));
 
     setEditingExpense(expense);
     setSelectedGroup(expense.group_id);
     setTitle(expense.title);
     setAmount(String(expense.amount));
-    setPaidBy(expense.paid_by);
+    setPaidBy(activeIds.has(expense.paid_by) ? expense.paid_by : (activeMembers[0]?.user_id || ''));
     setSplitMethod(expense.split_method as 'equal' | 'manual');
 
     const participantIds = new Set(parts.map((p) => p.user_id));
@@ -193,7 +235,7 @@ export function ExpensesPage() {
 
     // Calculate shares
     const participantArray = Array.from(selectedParticipants);
-    let shares: Record<string, number> = {};
+    const shares: Record<string, number> = {};
 
     if (splitMethod === 'equal') {
       const equalShares = calculateEqualShares(amt, participantArray.length);
@@ -221,31 +263,15 @@ export function ExpensesPage() {
     }
 
     const result = await runSave(async () => {
-      const { data: expense, error } = await supabase
-        .from('expenses')
-        .insert({
-          group_id: selectedGroup,
-          title: title.trim(),
-          amount: amt,
-          paid_by: paidBy,
-          split_method: splitMethod,
-          created_by: user.id,
-        })
-        .select()
-        .single();
-
+      const { error } = await supabase.rpc('create_expense', {
+        _group_id: selectedGroup,
+        _title: title.trim(),
+        _amount: amt,
+        _paid_by: paidBy,
+        _split_method: splitMethod,
+        _shares: participantArray.map((uid) => ({ user_id: uid, share_amount: shares[uid] })),
+      });
       if (error) throw error;
-
-      const partRows = participantArray.map((uid) => ({
-        expense_id: expense.id,
-        user_id: uid,
-        share_amount: shares[uid],
-      }));
-
-      const { error: partError } = await supabase
-        .from('expense_participants')
-        .insert(partRows);
-      if (partError) throw partError;
     });
 
     if (result !== null) {
@@ -260,6 +286,15 @@ export function ExpensesPage() {
     if (!user || !editingExpense) return;
 
     setValidationError(null);
+
+    if (!title.trim()) {
+      setValidationError('Введите название расхода');
+      return;
+    }
+    if (!paidBy) {
+      setValidationError('Укажите, кто заплатил');
+      return;
+    }
 
     const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) {
@@ -311,7 +346,9 @@ export function ExpensesPage() {
     const result = await runSave(async () => {
       const { error } = await supabase.rpc('update_expense', {
         _expense_id: editingExpense.id,
+        _title: title.trim(),
         _amount: amt,
+        _paid_by: paidBy,
         _split_method: splitMethod,
         _shares: participantArray.map((userId) => ({
           user_id: userId,
@@ -333,10 +370,14 @@ export function ExpensesPage() {
 
   const handleDelete = async (expense: Expense) => {
     if (!confirm(`Удалить расход «${expense.title}»?`)) return;
-    const { error } = await supabase.from('expenses').delete().eq('id', expense.id);
+    const { error } = await supabase.rpc('delete_expense', { _expense_id: expense.id });
     if (!error) {
       showToast('Расход удалён');
       loadData();
+    } else if (error.message.includes('expense_has_financial_history')) {
+      showToast('Расход нельзя удалить: к нему привязаны финансовые обязательства или платежи');
+    } else {
+      showToast('Не удалось удалить расход');
     }
   };
 
@@ -351,6 +392,7 @@ export function ExpensesPage() {
   };
 
   const handleMarkPaid = (obligation: ExpenseObligation) => {
+    paymentAttemptRef.current = null;
     setPaymentObligation(obligation);
     setPaymentAmount('');
     setPaymentError(null);
@@ -360,7 +402,7 @@ export function ExpensesPage() {
     if (!paymentObligation) return;
 
     const value = Number(paymentAmount.replace(',', '.'));
-    const remaining = Number(paymentObligation.amount);
+    const remaining = Number(paymentObligation.amount) - Number(paymentObligation.paid_amount || 0);
 
     if (!Number.isFinite(value) || value <= 0) {
       setPaymentError('Введите сумму больше нуля');
@@ -374,11 +416,21 @@ export function ExpensesPage() {
       return;
     }
 
+    if (paymentAttemptRef.current && paymentAttemptRef.current.amount !== value) {
+      setPaymentError('Сумма изменилась. Закройте окно и начните платёж заново, чтобы повтор не создал второй запрос.');
+      return;
+    }
+    if (!paymentAttemptRef.current) {
+      paymentAttemptRef.current = { requestId: crypto.randomUUID(), amount: value };
+    }
+    const requestId = paymentAttemptRef.current.requestId;
+
     setPaymentLoading(true);
 
     const { error } = await supabase.rpc('mark_obligation_paid', {
       _obligation_id: paymentObligation.id,
       _payment_amount: value,
+      _request_id: requestId,
     });
 
     setPaymentLoading(false);
@@ -389,22 +441,24 @@ export function ExpensesPage() {
     }
 
     setPaymentObligation(null);
+    paymentAttemptRef.current = null;
     setPaymentAmount('');
     setPaymentError(null);
     showToast('Перевод заявлен и ожидает подтверждения');
     loadData();
   };
 
-  const handleConfirmPaid = async (id: string) => {
-    const { error } = await supabase.rpc('confirm_obligation_payment', { _obligation_id: id });
+  const handleConfirmPaid = async (id: string, paymentId: string) => {
+    const { error } = await supabase.rpc('confirm_obligation_payment', { _obligation_id: id, _payment_id: paymentId });
     if (error) { showToast('Не удалось подтвердить перевод'); return; }
     showToast('Оплата подтверждена');
     loadData();
   };
 
-  const handleRejectPaid = async (id: string) => {
+  const handleRejectPaid = async (id: string, paymentId: string) => {
     const { error } = await supabase.rpc('reject_obligation_payment', {
       _obligation_id: id,
+      _payment_id: paymentId,
     });
     if (error) { showToast('Не удалось отклонить подтверждение'); return; }
     showToast('Оплата не подтверждена, долг снова отмечен как неоплаченный');
@@ -419,7 +473,7 @@ export function ExpensesPage() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-stone-800">Расходы</h1>
+          <h1 className="page-title">Расходы</h1>
           <p className="text-stone-500 mt-1">Делите расходы и считайте долги</p>
         </div>
         <div className="flex gap-2">
@@ -439,14 +493,14 @@ export function ExpensesPage() {
       {/* Balance summary */}
       {expenses.length > 0 && (
         <div className="grid grid-cols-2 gap-3">
-          <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+          <div className="surface-card p-4">
             <div className="flex items-center gap-2 mb-1">
               <TrendingDown className="text-orange-400" size={16} />
               <span className="text-xs text-stone-500">Ты должна</span>
             </div>
             <p className="text-xl font-bold text-stone-800">{iOwe > 0 ? `${iOwe.toLocaleString('ru-RU')} ₽` : '—'}</p>
           </div>
-          <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+          <div className="surface-card p-4">
             <div className="flex items-center gap-2 mb-1">
               <TrendingUp className="text-emerald-500" size={16} />
               <span className="text-xs text-stone-500">Тебе должны</span>
@@ -475,7 +529,7 @@ export function ExpensesPage() {
             const parts = expenseParts[e.id] || [];
             const expenseObligations = obligations.filter((o) => o.expense_id === e.id);
             return (
-              <div key={e.id} className="bg-white rounded-2xl p-5 shadow-sm border border-stone-100">
+              <div id={e.id} key={e.id} className="surface-card p-5">
                 <div className="flex items-start justify-between mb-2">
                   <div className="flex-1 min-w-0">
                     <h3 className="font-semibold text-stone-800">{e.title}</h3>
@@ -505,8 +559,10 @@ export function ExpensesPage() {
                   </div>
                 </div>
                 <div className="text-sm text-stone-600">
-                  Заплатила: <span className="font-medium">{getMemberEmoji(e.group_id, e.paid_by)} {getMemberName(e.group_id, e.paid_by)}</span>
+                  <span className="text-xs font-medium uppercase tracking-wide text-stone-400">Расход · оплатила </span>
+                  <span className="font-medium">{getMemberEmoji(e.group_id, e.paid_by)} {getMemberName(e.group_id, e.paid_by)}</span>
                 </div>
+                <p className="mt-3 text-xs font-medium uppercase tracking-wide text-stone-400">Распределение</p>
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   {parts.map((p) => (
                     <span key={p.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-stone-50 text-xs text-stone-600">
@@ -517,9 +573,9 @@ export function ExpensesPage() {
                 </div>
                 {expenseObligations.length > 0 && (
                   <div className="mt-3 space-y-2 border-t border-stone-100 pt-3">
-                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Обязательства</p>
+                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Оплата</p>
                     {expenseObligations.map((o) => (
-                      <div key={o.id} className="flex flex-wrap items-center justify-between gap-2 text-sm bg-stone-50 rounded-xl px-3 py-2">
+                      <div id={o.id} key={o.id} className="flex flex-wrap items-center justify-between gap-2 text-sm bg-stone-50 rounded-xl px-3 py-2">
                         <span className="text-stone-700">{getMemberName(e.group_id, o.debtor_id)} должна {getMemberName(e.group_id, o.creditor_id)} — <b>{Number(o.amount).toLocaleString('ru-RU')} ₽</b></span>
                         {o.status === 'unpaid' && o.debtor_id === user?.id && (
   <Button
@@ -531,10 +587,14 @@ export function ExpensesPage() {
 )}
                         {o.status === 'payment_pending_confirmation' && o.creditor_id === user?.id && (
                           <div className="w-full space-y-2">
+                            {(() => {
+                              const pendingPayment = (paymentHistory[o.id] || []).find((payment) => payment.status === 'pending');
+                              return pendingPayment ? (
+                            <>
                             <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-stone-700">
                               <div>
                                 Остаток обязательства:{' '}
-                                <b>{Number(o.amount).toLocaleString('ru-RU')} ₽</b>
+                                <b>{(Number(o.amount) - Number(o.paid_amount || 0)).toLocaleString('ru-RU')} ₽</b>
                               </div>
                               <div>
                                 Должник указал платёж:{' '}
@@ -545,7 +605,7 @@ export function ExpensesPage() {
                                 <b>
                                   {Math.max(
                                     0,
-                                    Number(o.amount) - Number(o.pending_payment_amount || 0)
+                                    Number(o.amount) - Number(o.paid_amount || 0) - Number(o.pending_payment_amount || 0)
                                   ).toLocaleString('ru-RU')}{' '}
                                   ₽
                                 </b>
@@ -554,23 +614,41 @@ export function ExpensesPage() {
 
                             <div className="flex gap-2 flex-wrap">
                               <Button
-                                onClick={() => handleConfirmPaid(o.id)}
+                                onClick={() => handleConfirmPaid(o.id, pendingPayment.id)}
                                 className="!py-1 !px-2 text-xs"
                               >
                                 Получила деньги
                               </Button>
                               <Button
-                                onClick={() => handleRejectPaid(o.id)}
+                                onClick={() => handleRejectPaid(o.id, pendingPayment.id)}
                                 className="!py-1 !px-2 text-xs"
                               >
                                 Не получила
                               </Button>
                             </div>
+                            </>
+                              ) : <p className="text-xs text-amber-700">Запись ожидающего платежа не найдена. Обновите страницу.</p>;
+                            })()}
                           </div>
                         )}
                         {o.status === 'unpaid' && o.debtor_id !== user?.id && <span className="text-xs text-amber-600">Не оплачено</span>}
                         {o.status === 'payment_pending_confirmation' && o.creditor_id !== user?.id && <span className="text-xs text-amber-600">Ожидает подтверждения</span>}
                         {o.status === 'settled' && <span className="text-xs text-emerald-600">Погашено</span>}
+                        {Number(o.paid_amount || 0) > 0 && o.status !== 'settled' && (
+                          <span className="text-xs text-emerald-700">Уже оплачено: {Number(o.paid_amount).toLocaleString('ru-RU')} ₽</span>
+                        )}
+                        {(paymentHistory[o.id] || []).length > 0 && (
+                          <details className="w-full text-xs text-stone-500">
+                            <summary className="cursor-pointer">История платежей ({paymentHistory[o.id].length})</summary>
+                            <ul className="mt-1 space-y-1 pl-4">
+                              {paymentHistory[o.id].map((payment) => (
+                                <li key={payment.id}>
+                                  {format(parseISO(payment.created_at), 'd MMM yyyy, HH:mm', { locale: ru })} · {Number(payment.amount).toLocaleString('ru-RU')} ₽ · {payment.status === 'confirmed' ? 'подтверждён' : payment.status === 'pending' ? 'ожидает подтверждения' : 'отклонён'}
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -606,29 +684,27 @@ export function ExpensesPage() {
             </FormField>
           )}
 
-          {!editingExpense && (
-            <FormField label="Название">
-              <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Например, Такси"
-                autoFocus
-              />
-            </FormField>
-          )}
+          <FormField label="Название">
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Например, Такси"
+              autoFocus
+            />
+          </FormField>
 
           <FormField label="Сумма (₽)">
             <Input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" min="0" step="0.01" />
           </FormField>
 
-          {!editingExpense && selectedGroup && (groupMembers[selectedGroup] || []).length > 0 && (
+          {selectedGroup && getActiveGroupMembers(selectedGroup).length > 0 && (
             <FormField label="Кто заплатил">
               <select
                 value={paidBy}
                 onChange={(e) => setPaidBy(e.target.value)}
                 className="w-full px-4 py-2.5 rounded-xl border border-stone-200 bg-white text-stone-800 outline-none focus:border-rose-300 focus:ring-2 focus:ring-rose-100"
               >
-                {(groupMembers[selectedGroup] || []).map((m) => (
+                {getActiveGroupMembers(selectedGroup).map((m) => (
                   <option key={m.user_id} value={m.user_id}>{m.avatar_emoji} {m.display_name || 'Участница'}</option>
                 ))}
               </select>
@@ -659,17 +735,15 @@ export function ExpensesPage() {
           </div>
 
           {/* Participants */}
-          {selectedGroup && (groupMembers[selectedGroup] || []).length > 0 && (
+          {selectedGroup && getActiveGroupMembers(selectedGroup).length > 0 && (
             <div className="space-y-2">
               <p className="text-sm font-medium text-stone-700">Участницы расхода</p>
-              {(groupMembers[selectedGroup] || [])
-                .filter((m) => !editingExpense || selectedParticipants.has(m.user_id))
+              {getActiveGroupMembers(selectedGroup)
                 .map((m) => (
                 <div key={m.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-stone-50">
                   <input
                     type="checkbox"
                     checked={selectedParticipants.has(m.user_id)}
-                    disabled={!!editingExpense}
                     onChange={(e) => {
                       const next = new Set(selectedParticipants);
                       if (e.target.checked) next.add(m.user_id);
@@ -761,6 +835,7 @@ export function ExpensesPage() {
                 variant="secondary"
                 onClick={() => {
                   setPaymentObligation(null);
+                  paymentAttemptRef.current = null;
                   setPaymentAmount('');
                   setPaymentError(null);
                 }}

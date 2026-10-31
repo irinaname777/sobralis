@@ -98,7 +98,7 @@ export function DashboardPage() {
     <div className="space-y-6 animate-fade-in">
       {/* Greeting */}
       <div>
-        <h1 className="text-2xl font-bold text-stone-800">
+        <h1 className="page-title">
           Привет, {greetingName} {greetingEmoji}
         </h1>
         <p className="text-stone-500 mt-1">Давайте соберёмся ❤️</p>
@@ -110,7 +110,7 @@ export function DashboardPage() {
         {upcomingMeetings.length > 0 ? (
           <Link
             to="/meetings"
-            className="block bg-white rounded-2xl p-5 shadow-sm border border-stone-100 hover:shadow-md transition-shadow"
+            className="block surface-card p-5 hover:shadow-md transition-shadow"
           >
             <div className="flex items-start gap-4">
               <div className="w-12 h-12 rounded-xl bg-rose-100 flex items-center justify-center shrink-0">
@@ -129,7 +129,7 @@ export function DashboardPage() {
             </div>
           </Link>
         ) : (
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-stone-100 text-center">
+          <div className="surface-card p-5 text-center">
             <p className="text-stone-400 mb-3">Пока нет запланированных встреч</p>
             <Link
               to="/meetings"
@@ -146,12 +146,12 @@ export function DashboardPage() {
       <section>
         <h2 className="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">Твои группы</h2>
         {groups.length > 0 ? (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {groups.slice(0, 4).map((g) => (
               <Link
                 key={g.id}
                 to="/groups"
-                className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 hover:shadow-md transition-shadow"
+                className="surface-card p-4 hover:shadow-md transition-shadow"
               >
                 <div className="w-10 h-10 rounded-xl bg-stone-100 flex items-center justify-center mb-2">
                   <Users className="text-stone-500" size={20} />
@@ -162,7 +162,7 @@ export function DashboardPage() {
             ))}
           </div>
         ) : (
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-stone-100 text-center">
+          <div className="surface-card p-5 text-center">
             <p className="text-stone-400 mb-3">Добавьте подруг, чтобы начать планировать встречи</p>
             <Link
               to="/groups"
@@ -179,7 +179,7 @@ export function DashboardPage() {
       <section>
         <h2 className="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">Расходы</h2>
         <div className="grid grid-cols-2 gap-3">
-          <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+          <div className="surface-card p-4">
             <div className="flex items-center gap-2 mb-1">
               <TrendingDown className="text-orange-400" size={16} />
               <span className="text-xs text-stone-500">Ты должна</span>
@@ -188,7 +188,7 @@ export function DashboardPage() {
               {iOwe > 0 ? `${iOwe.toLocaleString('ru-RU')} ₽` : '—'}
             </p>
           </div>
-          <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+          <div className="surface-card p-4">
             <div className="flex items-center gap-2 mb-1">
               <TrendingUp className="text-emerald-500" size={16} />
               <span className="text-xs text-stone-500">Тебе должны</span>
@@ -206,28 +206,28 @@ export function DashboardPage() {
         <div className="grid grid-cols-2 gap-3">
           <Link
             to="/calendar"
-            className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 hover:shadow-md transition-shadow flex items-center gap-3"
+            className="surface-card p-4 hover:shadow-md transition-shadow flex items-center gap-3"
           >
             <Calendar className="text-rose-400" size={22} />
             <span className="text-sm font-medium text-stone-700">Календарь</span>
           </Link>
           <Link
             to="/trips"
-            className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 hover:shadow-md transition-shadow flex items-center gap-3"
+            className="surface-card p-4 hover:shadow-md transition-shadow flex items-center gap-3"
           >
             <Plane className="text-rose-400" size={22} />
             <span className="text-sm font-medium text-stone-700">Поездки</span>
           </Link>
           <Link
             to="/expenses"
-            className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 hover:shadow-md transition-shadow flex items-center gap-3"
+            className="surface-card p-4 hover:shadow-md transition-shadow flex items-center gap-3"
           >
             <Receipt className="text-rose-400" size={22} />
             <span className="text-sm font-medium text-stone-700">Расходы</span>
           </Link>
           <Link
             to="/meetings"
-            className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 hover:shadow-md transition-shadow flex items-center gap-3"
+            className="surface-card p-4 hover:shadow-md transition-shadow flex items-center gap-3"
           >
             <Coffee className="text-rose-400" size={22} />
             <span className="text-sm font-medium text-stone-700">Встречи</span>

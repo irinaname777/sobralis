@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Heart, Users } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Input, Button, ErrorMessage } from '@/components/ui';
 import { afterOnboardingPath } from '@/lib/invite';
 import { formatUserError } from '@/lib/errors';
+import { hasCurrentHealthDataConsent, saveCycleSettings } from '@/lib/legalConsents';
 
 const EMOJI_CHOICES = ['🌸', '🌺', '🌻', '🌷', '🌹', '🦋', '💫', '⭐', '🌙', '☀️', '🌈', '🧁', '🍓', '🫐', '🍑', '🥥'];
 
@@ -19,6 +20,8 @@ export function OnboardingPage() {
   const [lastPeriod, setLastPeriod] = useState('');
   const [cycleLength, setCycleLength] = useState('28');
   const [periodLength, setPeriodLength] = useState('5');
+  const [cycleConsentAvailable, setCycleConsentAvailable] = useState(false);
+  const [cycleConsentLoading, setCycleConsentLoading] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,11 +35,51 @@ export function OnboardingPage() {
 
   const currentStep = steps[step];
 
+  useEffect(() => {
+    let active = true;
+
+    const loadCycleConsent = async () => {
+      if (!user) {
+        setCycleConsentAvailable(false);
+        setCycleConsentLoading(false);
+        return;
+      }
+
+      setCycleConsentLoading(true);
+      try {
+        const available = await hasCurrentHealthDataConsent(user.id);
+        if (active) setCycleConsentAvailable(available);
+      } catch {
+        if (active) setCycleConsentAvailable(false);
+      } finally {
+        if (active) setCycleConsentLoading(false);
+      }
+    };
+
+    void loadCycleConsent();
+    return () => { active = false; };
+  }, [user]);
+
   const saveProfile = async () => {
     setLoading(true);
     setError(null);
     try {
       if (!user) throw new Error('Пользователь не найден');
+
+      if (trackCycle && !cycleConsentAvailable) {
+        setError('Для подбора дат сначала предоставьте отдельное согласие на обработку сведений о состоянии здоровья.');
+        return;
+      }
+
+      if (trackCycle && lastPeriod) {
+        await saveCycleSettings({
+          trackingEnabled: true,
+          lastPeriodStart: lastPeriod,
+          averageCycleLength: parseInt(cycleLength) || 28,
+          periodLength: parseInt(periodLength) || 5,
+          privacyLevel: 'hidden',
+        });
+      }
 
       const { error: profileError } = await supabase
         .from('profiles')
@@ -48,19 +91,6 @@ export function OnboardingPage() {
         .eq('id', user.id);
 
       if (profileError) throw profileError;
-
-      if (trackCycle && lastPeriod) {
-        const { error: cycleError } = await supabase.from('cycle_settings').upsert({
-          user_id: user.id,
-          tracking_enabled: true,
-          last_period_start: lastPeriod,
-          average_cycle_length: parseInt(cycleLength) || 28,
-          period_length: parseInt(periodLength) || 5,
-          privacy_level: 'hidden',
-        }, { onConflict: 'user_id' });
-
-        if (cycleError) throw cycleError;
-      }
 
       await refreshProfile();
       navigate(afterOnboardingPath());
@@ -166,38 +196,48 @@ export function OnboardingPage() {
           {/* Step 1: Cycle tracking choice */}
           {step === 1 && (
             <div className="space-y-4 animate-fade-in">
-              <button
-                onClick={() => setTrackCycle(true)}
-                className={`w-full p-5 rounded-2xl border-2 text-left transition-all ${
-                  trackCycle ? 'border-rose-400 bg-rose-50' : 'border-stone-200 bg-white hover:border-stone-300'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${trackCycle ? 'border-rose-400 bg-rose-400' : 'border-stone-300'}`}>
-                    {trackCycle && <div className="w-2 h-2 rounded-full bg-white" />}
-                  </div>
-                  <div>
-                    <p className="font-medium text-stone-800">Да, учитывать цикл</p>
-                    <p className="text-sm text-stone-500 mt-0.5">Поможет находить комфортные даты</p>
-                  </div>
+              {cycleConsentLoading ? (
+                <p className="text-sm text-stone-500">Проверка отдельного согласия…</p>
+              ) : cycleConsentAvailable ? (
+                <>
+                  <button
+                    onClick={() => setTrackCycle(true)}
+                    className={`w-full p-5 rounded-2xl border-2 text-left transition-all ${
+                      trackCycle ? 'border-rose-400 bg-rose-50' : 'border-stone-200 bg-white hover:border-stone-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${trackCycle ? 'border-rose-400 bg-rose-400' : 'border-stone-300'}`}>
+                        {trackCycle && <div className="w-2 h-2 rounded-full bg-white" />}
+                      </div>
+                      <div>
+                        <p className="font-medium text-stone-800">Да, учитывать цикл</p>
+                        <p className="text-sm text-stone-500 mt-0.5">Поможет находить комфортные даты</p>
+                      </div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => setTrackCycle(false)}
+                    className={`w-full p-5 rounded-2xl border-2 text-left transition-all ${
+                      !trackCycle ? 'border-rose-400 bg-rose-50' : 'border-stone-200 bg-white hover:border-stone-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${!trackCycle ? 'border-rose-400 bg-rose-400' : 'border-stone-300'}`}>
+                        {!trackCycle && <div className="w-2 h-2 rounded-full bg-white" />}
+                      </div>
+                      <div>
+                        <p className="font-medium text-stone-800">Нет, не сейчас</p>
+                        <p className="text-sm text-stone-500 mt-0.5">Можно включить позже в настройках</p>
+                      </div>
+                    </div>
+                  </button>
+                </>
+              ) : (
+                <div className="rounded-xl border border-stone-200 bg-white p-4 text-sm text-stone-600">
+                  Использование функции цикла не включено. Решение можно изменить отдельно в настройках данных цикла.
                 </div>
-              </button>
-              <button
-                onClick={() => setTrackCycle(false)}
-                className={`w-full p-5 rounded-2xl border-2 text-left transition-all ${
-                  !trackCycle ? 'border-rose-400 bg-rose-50' : 'border-stone-200 bg-white hover:border-stone-300'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${!trackCycle ? 'border-rose-400 bg-rose-400' : 'border-stone-300'}`}>
-                    {!trackCycle && <div className="w-2 h-2 rounded-full bg-white" />}
-                  </div>
-                  <div>
-                    <p className="font-medium text-stone-800">Нет, не сейчас</p>
-                    <p className="text-sm text-stone-500 mt-0.5">Можно включить позже в настройках</p>
-                  </div>
-                </div>
-              </button>
+              )}
             </div>
           )}
 

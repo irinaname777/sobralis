@@ -27,7 +27,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .maybeSingle();
 
     if (error) {
-      console.error('Failed to load profile:', error);
+      if (import.meta.env.DEV) {
+        console.error('Failed to load profile. Supabase error code:', error.code);
+      }
       return;
     }
     setProfile(data as Profile | null);
